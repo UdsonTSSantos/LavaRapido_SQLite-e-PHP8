@@ -6,47 +6,68 @@ ensure_lavagens();
 ensure_clientes();
 
 $u = usuario_logado();
+
+/* =========================================================
+ *  Modo edição?
+ * ========================================================= */
+$id      = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
+$editar  = $id > 0;
+$entrada = null;
+$itensAtuais = [];
+
+if ($editar) {
+    $st = db()->prepare('SELECT * FROM lavagem_entradas WHERE id = ?');
+    $st->execute([$id]);
+    $entrada = $st->fetch();
+
+    if (!$entrada) {
+        flash('Entrada não encontrada.', 'erro');
+        header('Location: entradas.php');
+        exit;
+    }
+
+    $st = db()->prepare('SELECT * FROM lavagem_itens WHERE entrada_id = ? ORDER BY id');
+    $st->execute([$id]);
+    $itensAtuais = $st->fetchAll();
+}
+
 $erros = [];
 
-/* ---------- POST: salvar entrada ---------- */
+/* ---------- POST: salvar (novo ou edição) ---------- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar') {
     csrf_validar();
 
-    $cliente_id       = (int)($_POST['cliente_id'] ?? 0);
-    $cliente_nome     = trim((string)($_POST['cliente_nome'] ?? ''));
-    $cliente_celular  = trim((string)($_POST['cliente_celular'] ?? ''));
-    $placa            = normalizar_placa((string)($_POST['placa'] ?? ''));
-    $data_entrada     = trim((string)($_POST['data_entrada'] ?? date('Y-m-d')));
-    $hora_entrada     = trim((string)($_POST['hora_entrada'] ?? date('H:i')));
-    $horas_prev       = max(0, (int)($_POST['previsao_horas'] ?? 0));
-    $observacoes      = trim((string)($_POST['observacoes'] ?? ''));
-    $avarias          = trim((string)($_POST['avarias'] ?? ''));
-    $desconto_tipo    = $_POST['desconto_tipo'] ?? 'valor';
-    $desconto_raw     = (string)($_POST['desconto'] ?? '0');
-    $servicos_ids     = array_map('intval', (array)($_POST['servicos'] ?? []));
+    $cliente_id      = (int)($_POST['cliente_id'] ?? 0);
+    $cliente_nome    = trim((string)($_POST['cliente_nome'] ?? ''));
+    $cliente_celular = trim((string)($_POST['cliente_celular'] ?? ''));
+    $placa           = normalizar_placa((string)($_POST['placa'] ?? ''));
+    $data_entrada    = trim((string)($_POST['data_entrada'] ?? date('Y-m-d')));
+    $hora_entrada    = trim((string)($_POST['hora_entrada'] ?? date('H:i')));
+    $horas_prev      = max(0, (int)($_POST['previsao_horas'] ?? 0));
+    $observacoes     = trim((string)($_POST['observacoes'] ?? ''));
+    $avarias         = trim((string)($_POST['avarias'] ?? ''));
+    $desconto_tipo   = $_POST['desconto_tipo'] ?? 'valor';
+    $desconto_raw    = (string)($_POST['desconto'] ?? '0');
+    $servicos_ids    = array_map('intval', (array)($_POST['servicos'] ?? []));
 
     $m_marca  = trim((string)($_POST['manual_marca']  ?? ''));
     $m_modelo = trim((string)($_POST['manual_modelo'] ?? ''));
     $m_cor    = trim((string)($_POST['manual_cor']    ?? ''));
     $m_ano    = trim((string)($_POST['manual_ano']    ?? ''));
 
-    // Cliente é OPCIONAL: aceita nome digitado livremente
     if ($cliente_nome === '')    $erros[] = 'Informe o nome do cliente.';
     if (!validar_placa($placa))  $erros[] = 'Informe uma placa válida (ABC1234 ou ABC1D23).';
     if (!$servicos_ids)          $erros[] = 'Selecione ao menos um serviço.';
     if ($data_entrada === '')    $erros[] = 'Informe a data de entrada.';
     if ($hora_entrada === '')    $erros[] = 'Informe a hora de entrada.';
 
-    // Se escolheu um cliente da lista, valida se existe mesmo
     if ($cliente_id > 0) {
         $stC = db()->prepare('SELECT id FROM clientes WHERE id = ? AND ativo = 1');
         $stC->execute([$cliente_id]);
-        if (!$stC->fetch()) {
-            $cliente_id = 0; // cai como avulso
-        }
+        if (!$stC->fetch()) $cliente_id = 0;
     }
 
-    // Monta itens com preços atuais do catálogo
+    /* Monta itens com preços atuais */
     $itens = [];
     $subtotal = 0;
     if (!$erros) {
@@ -65,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
         if (!$itens) $erros[] = 'Nenhum dos serviços escolhidos está ativo.';
     }
 
-    // Desconto
+    /* Desconto */
     $desc_centavos = 0;
     $desc_percent  = 0;
     if (!$erros) {
@@ -79,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
     }
     $total = max(0, $subtotal - $desc_centavos);
 
-    // Previsão de saída
+    /* Previsão de saída */
     $prev_dt = '';
     if (!$erros && $horas_prev > 0) {
         $ts = strtotime("$data_entrada $hora_entrada");
@@ -87,7 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
     }
 
     if (!$erros) {
-        // Veículo: cache local ou dados manuais
+        /* Veículo: cache local ou dados manuais */
         $veiculo_id = null;
         $vLocal = buscar_veiculo_por_placa($placa);
         if ($vLocal) {
@@ -108,56 +129,121 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
         $pdo = db();
         $pdo->beginTransaction();
         try {
-            $stmt = $pdo->prepare("
-                INSERT INTO lavagem_entradas
-                    (cliente_id, cliente_nome_avulso, cliente_celular, placa, veiculo_id,
-                     veiculo_manual_marca, veiculo_manual_modelo, veiculo_manual_cor, veiculo_manual_ano,
-                     data_entrada, hora_entrada, previsao_saida_horas, previsao_saida_datetime,
-                     observacoes, avarias, status,
-                     subtotal_centavos, desconto_centavos, desconto_percentual,
-                     total_centavos, pago, criado_por)
-                VALUES
-                    (:cid, :cna, :ccel, :placa, :vid,
-                     :mmarca, :mmodelo, :mcor, :mano,
-                     :data, :hora, :phoras, :pdt,
-                     :obs, :avarias, 'aberta',
-                     :sub, :desc, :descp,
-                     :total, 0, :uid)
-            ");
-            $stmt->execute([
-                ':cid'    => $cliente_id ?: null,
-                ':cna'    => $cliente_nome,
-                ':ccel'   => $cliente_celular,
-                ':placa'  => $placa,
-                ':vid'    => $veiculo_id,
-                ':mmarca' => $m_marca,
-                ':mmodelo'=> $m_modelo,
-                ':mcor'   => $m_cor,
-                ':mano'   => $m_ano,
-                ':data'   => $data_entrada,
-                ':hora'   => $hora_entrada,
-                ':phoras' => $horas_prev,
-                ':pdt'    => $prev_dt,
-                ':obs'    => $observacoes,
-                ':avarias'=> $avarias,
-                ':sub'    => $subtotal,
-                ':desc'   => $desc_centavos,
-                ':descp'  => $desc_percent,
-                ':total'  => $total,
-                ':uid'    => (int)$u['id'],
-            ]);
-            $entrada_id = (int)$pdo->lastInsertId();
+            if ($editar) {
+                /* ---------- UPDATE ---------- */
+                $pdo->prepare("
+                    UPDATE lavagem_entradas SET
+                        cliente_id = :cid,
+                        cliente_nome_avulso = :cna,
+                        cliente_celular = :ccel,
+                        placa = :placa,
+                        veiculo_id = :vid,
+                        veiculo_manual_marca = :mmarca,
+                        veiculo_manual_modelo = :mmodelo,
+                        veiculo_manual_cor = :mcor,
+                        veiculo_manual_ano = :mano,
+                        data_entrada = :data,
+                        hora_entrada = :hora,
+                        previsao_saida_horas = :phoras,
+                        previsao_saida_datetime = :pdt,
+                        observacoes = :obs,
+                        avarias = :avarias,
+                        subtotal_centavos = :sub,
+                        desconto_centavos = :desc,
+                        desconto_percentual = :descp,
+                        total_centavos = :total,
+                        atualizado_em = datetime('now','localtime')
+                    WHERE id = :id
+                ")->execute([
+                    ':cid'    => $cliente_id ?: null,
+                    ':cna'    => $cliente_nome,
+                    ':ccel'   => $cliente_celular,
+                    ':placa'  => $placa,
+                    ':vid'    => $veiculo_id,
+                    ':mmarca' => $m_marca,
+                    ':mmodelo'=> $m_modelo,
+                    ':mcor'   => $m_cor,
+                    ':mano'   => $m_ano,
+                    ':data'   => $data_entrada,
+                    ':hora'   => $hora_entrada,
+                    ':phoras' => $horas_prev,
+                    ':pdt'    => $prev_dt,
+                    ':obs'    => $observacoes,
+                    ':avarias'=> $avarias,
+                    ':sub'    => $subtotal,
+                    ':desc'   => $desc_centavos,
+                    ':descp'  => $desc_percent,
+                    ':total'  => $total,
+                    ':id'     => $id,
+                ]);
 
-            $ins = $pdo->prepare(
-                'INSERT INTO lavagem_itens (entrada_id, lavagem_id, nome, preco_centavos)
-                 VALUES (?, ?, ?, ?)'
-            );
-            foreach ($itens as $it) {
-                $ins->execute([$entrada_id, $it['lavagem_id'], $it['nome'], $it['preco_centavos']]);
+                /* Substitui itens: apaga os antigos e insere os novos */
+                $pdo->prepare('DELETE FROM lavagem_itens WHERE entrada_id = ?')->execute([$id]);
+
+                $ins = $pdo->prepare(
+                    'INSERT INTO lavagem_itens (entrada_id, lavagem_id, nome, preco_centavos)
+                     VALUES (?, ?, ?, ?)'
+                );
+                foreach ($itens as $it) {
+                    $ins->execute([$id, $it['lavagem_id'], $it['nome'], $it['preco_centavos']]);
+                }
+                $entrada_id = $id;
+                $mensagem = 'Entrada atualizada com sucesso.';
+            } else {
+                /* ---------- INSERT ---------- */
+                $stmt = $pdo->prepare("
+                    INSERT INTO lavagem_entradas
+                        (cliente_id, cliente_nome_avulso, cliente_celular, placa, veiculo_id,
+                         veiculo_manual_marca, veiculo_manual_modelo, veiculo_manual_cor, veiculo_manual_ano,
+                         data_entrada, hora_entrada, previsao_saida_horas, previsao_saida_datetime,
+                         observacoes, avarias, status,
+                         subtotal_centavos, desconto_centavos, desconto_percentual,
+                         total_centavos, pago, criado_por)
+                    VALUES
+                        (:cid, :cna, :ccel, :placa, :vid,
+                         :mmarca, :mmodelo, :mcor, :mano,
+                         :data, :hora, :phoras, :pdt,
+                         :obs, :avarias, 'aberta',
+                         :sub, :desc, :descp,
+                         :total, 0, :uid)
+                ");
+                $stmt->execute([
+                    ':cid'    => $cliente_id ?: null,
+                    ':cna'    => $cliente_nome,
+                    ':ccel'   => $cliente_celular,
+                    ':placa'  => $placa,
+                    ':vid'    => $veiculo_id,
+                    ':mmarca' => $m_marca,
+                    ':mmodelo'=> $m_modelo,
+                    ':mcor'   => $m_cor,
+                    ':mano'   => $m_ano,
+                    ':data'   => $data_entrada,
+                    ':hora'   => $hora_entrada,
+                    ':phoras' => $horas_prev,
+                    ':pdt'    => $prev_dt,
+                    ':obs'    => $observacoes,
+                    ':avarias'=> $avarias,
+                    ':sub'    => $subtotal,
+                    ':desc'   => $desc_centavos,
+                    ':descp'  => $desc_percent,
+                    ':total'  => $total,
+                    ':uid'    => (int)$u['id'],
+                ]);
+                $entrada_id = (int)$pdo->lastInsertId();
+
+                $ins = $pdo->prepare(
+                    'INSERT INTO lavagem_itens (entrada_id, lavagem_id, nome, preco_centavos)
+                     VALUES (?, ?, ?, ?)'
+                );
+                foreach ($itens as $it) {
+                    $ins->execute([$entrada_id, $it['lavagem_id'], $it['nome'], $it['preco_centavos']]);
+                }
+                $mensagem = 'Entrada registrada com sucesso.';
             }
+
             $pdo->commit();
 
-            flash('Entrada registrada com sucesso.', 'sucesso');
+            flash($mensagem, 'sucesso');
             header('Location: entradas.php');
             exit;
         } catch (Throwable $ex) {
@@ -165,6 +251,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
             $erros[] = 'Erro ao salvar: ' . $ex->getMessage();
         }
     }
+
+    /* Se deu erro no POST, reaproveita os valores digitados */
+    $entrada = array_merge($entrada ?? [], [
+        'cliente_id'          => $cliente_id,
+        'cliente_nome_avulso' => $cliente_nome,
+        'cliente_celular'     => $cliente_celular,
+        'placa'               => $placa,
+        'data_entrada'        => $data_entrada,
+        'hora_entrada'        => $hora_entrada,
+        'previsao_saida_horas'=> $horas_prev,
+        'observacoes'         => $observacoes,
+        'avarias'             => $avarias,
+        'veiculo_manual_marca'=> $m_marca,
+        'veiculo_manual_modelo'=> $m_modelo,
+        'veiculo_manual_cor'  => $m_cor,
+        'veiculo_manual_ano'  => $m_ano,
+    ]);
 }
 
 /* ---------- Dados para a tela ---------- */
@@ -173,12 +276,47 @@ $clientes = db()->query(
      FROM clientes WHERE ativo = 1 ORDER BY nome COLLATE NOCASE'
 )->fetchAll();
 
-// Serviços em ORDEM ALFABÉTICA (conforme pedido)
 $servicos = db()->query(
     'SELECT * FROM lavagens WHERE ativo = 1 ORDER BY nome COLLATE NOCASE'
 )->fetchAll();
 
-$titulo = 'Nova entrada de lavagem';
+/* ---------- Valores iniciais do formulário ---------- */
+$v = [
+    'cliente_id'          => $entrada['cliente_id']          ?? 0,
+    'cliente_nome'        => $entrada['cliente_nome_avulso'] ?? '',
+    'cliente_celular'     => $entrada['cliente_celular']     ?? '',
+    'placa'               => $entrada['placa']               ?? '',
+    'data_entrada'        => $entrada['data_entrada']        ?? date('Y-m-d'),
+    'hora_entrada'        => $entrada['hora_entrada']        ?? date('H:i'),
+    'previsao_horas'      => (int)($entrada['previsao_saida_horas'] ?? 0),
+    'observacoes'         => $entrada['observacoes']         ?? '',
+    'avarias'             => $entrada['avarias']             ?? '',
+    'manual_marca'        => $entrada['veiculo_manual_marca']  ?? '',
+    'manual_modelo'       => $entrada['veiculo_manual_modelo'] ?? '',
+    'manual_cor'          => $entrada['veiculo_manual_cor']    ?? '',
+    'manual_ano'          => $entrada['veiculo_manual_ano']    ?? '',
+];
+
+/* Desconto */
+$descPercent = (int)($entrada['desconto_percentual'] ?? 0);
+$descCent    = (int)($entrada['desconto_centavos']   ?? 0);
+if ($descPercent > 0) {
+    $v['desconto_tipo'] = 'percentual';
+    $v['desconto']      = (string)$descPercent;
+} else {
+    $v['desconto_tipo'] = 'valor';
+    $v['desconto']      = $descCent > 0 ? centavos_para_moeda($descCent) : '0,00';
+}
+
+/* Quando estamos em POST com erro, sobrescreve os valores do desconto */
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $v['desconto_tipo'] = $_POST['desconto_tipo'] ?? $v['desconto_tipo'];
+    $v['desconto']      = $_POST['desconto']      ?? $v['desconto'];
+}
+
+$pago = (int)($entrada['pago'] ?? 0);
+
+$titulo = $editar ? 'Editar entrada de lavagem' : 'Nova entrada de lavagem';
 require __DIR__ . '/header.php';
 ?>
 
@@ -219,15 +357,25 @@ require __DIR__ . '/header.php';
   <form method="post" id="formEntrada" class="bg-white rounded-xl shadow p-6 sm:p-8 space-y-6" novalidate>
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="acao" value="salvar">
-    <input type="hidden" name="cliente_id" id="cliente_id" value="<?= (int)($_POST['cliente_id'] ?? 0) ?>">
+    <input type="hidden" name="id" value="<?= $editar ? (int)$id : '' ?>">
+    <input type="hidden" name="cliente_id" id="cliente_id" value="<?= (int)$v['cliente_id'] ?>">
 
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-semibold">Nova entrada</h1>
-        <p class="text-sm text-slate-500">Registre a entrada do veículo para lavagem.</p>
+        <h1 class="text-2xl font-semibold"><?= $editar ? 'Editar entrada' : 'Nova entrada' ?></h1>
+        <p class="text-sm text-slate-500">
+          <?= $editar ? 'Altere os dados e salve as modificações.' : 'Registre a entrada do veículo para lavagem.' ?>
+        </p>
       </div>
       <a href="entradas.php" class="text-sm text-sky-600 hover:underline">← Voltar</a>
     </div>
+
+    <?php if ($editar && $pago): ?>
+      <div class="rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm">
+        <strong>Atenção:</strong> esta entrada já foi marcada como <strong>paga</strong>.
+        Alterações nos serviços e valores <u>não</u> são refletidas automaticamente no pagamento já registrado.
+      </div>
+    <?php endif; ?>
 
     <?php if ($erros): ?>
       <div class="rounded-md border border-rose-200 bg-rose-50 text-rose-800 px-4 py-3 text-sm">
@@ -245,7 +393,7 @@ require __DIR__ . '/header.php';
         <label class="block text-sm font-medium mb-1">Nome do cliente *</label>
         <input type="text" name="cliente_nome" id="cliente_nome" list="listaClientes"
                required autocomplete="off" maxlength="150"
-               value="<?= e($_POST['cliente_nome'] ?? '') ?>"
+               value="<?= e($v['cliente_nome']) ?>"
                placeholder="Digite o nome ou escolha da lista..."
                class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
         <datalist id="listaClientes">
@@ -265,7 +413,7 @@ require __DIR__ . '/header.php';
         <label class="block text-sm font-medium mb-1">Celular do cliente</label>
         <input type="text" name="cliente_celular" id="cliente_celular" data-mask="celular"
                inputmode="numeric" maxlength="16"
-               value="<?= e($_POST['cliente_celular'] ?? '') ?>"
+               value="<?= e($v['cliente_celular']) ?>"
                placeholder="(00) 00000-0000"
                class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
         <p class="mt-1 text-xs text-slate-500">
@@ -273,9 +421,20 @@ require __DIR__ . '/header.php';
         </p>
       </div>
 
-      <div class="sm:col-span-2" id="clienteInfo" hidden>
+      <div class="sm:col-span-2" id="clienteInfo" <?= (int)$v['cliente_id'] > 0 ? '' : 'hidden' ?>>
         <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
-          <div class="font-medium text-emerald-800" id="cliInfoNome"></div>
+          <div class="font-medium text-emerald-800" id="cliInfoNome">
+            <?php
+              if ((int)$v['cliente_id'] > 0) {
+                  foreach ($clientes as $c) {
+                      if ((int)$c['id'] === (int)$v['cliente_id']) {
+                          echo 'Vinculado: ' . e($c['nome']);
+                          break;
+                      }
+                  }
+              }
+            ?>
+          </div>
           <div class="text-xs text-emerald-700">Cliente vinculado ao cadastro — celular preenchido automaticamente.</div>
         </div>
       </div>
@@ -290,7 +449,7 @@ require __DIR__ . '/header.php';
         <div class="relative">
           <input name="placa" id="placa" required maxlength="8" autocomplete="off"
                  placeholder="ABC1D23"
-                 value="<?= e($_POST['placa'] ?? '') ?>"
+                 value="<?= e(normalizar_placa($v['placa'])) ?>"
                  class="w-full rounded-lg border border-slate-300 px-3 py-2.5 uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-sky-500">
           <span id="placaStatus" class="absolute right-3 top-2.5 text-xs text-slate-400"></span>
         </div>
@@ -320,22 +479,22 @@ require __DIR__ . '/header.php';
         </div>
       </div>
 
-      <details class="sm:col-span-6 mt-2" id="manualBox">
+      <details class="sm:col-span-6 mt-2" id="manualBox" <?= (empty($v['manual_marca']) && empty($v['manual_modelo']) && empty($v['manual_cor']) && empty($v['manual_ano'])) ? '' : 'open' ?>>
         <summary class="cursor-pointer text-sm text-slate-600 hover:text-sky-600">
           Placa não encontrada? Informe os dados do veículo manualmente
         </summary>
         <div class="mt-3 grid gap-3 sm:grid-cols-4">
           <div><label class="block text-xs font-medium mb-1">Marca</label>
-            <input name="manual_marca" maxlength="40" value="<?= e($_POST['manual_marca'] ?? '') ?>"
+            <input name="manual_marca" maxlength="40" value="<?= e($v['manual_marca']) ?>"
                    class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div>
           <div><label class="block text-xs font-medium mb-1">Modelo</label>
-            <input name="manual_modelo" maxlength="60" value="<?= e($_POST['manual_modelo'] ?? '') ?>"
+            <input name="manual_modelo" maxlength="60" value="<?= e($v['manual_modelo']) ?>"
                    class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div>
           <div><label class="block text-xs font-medium mb-1">Cor</label>
-            <input name="manual_cor" maxlength="30" value="<?= e($_POST['manual_cor'] ?? '') ?>"
+            <input name="manual_cor" maxlength="30" value="<?= e($v['manual_cor']) ?>"
                    class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div>
           <div><label class="block text-xs font-medium mb-1">Ano</label>
-            <input name="manual_ano" maxlength="10" value="<?= e($_POST['manual_ano'] ?? '') ?>"
+            <input name="manual_ano" maxlength="10" value="<?= e($v['manual_ano']) ?>"
                    class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div>
         </div>
       </details>
@@ -347,18 +506,18 @@ require __DIR__ . '/header.php';
 
       <div class="sm:col-span-2">
         <label class="block text-sm font-medium mb-1">Data de entrada *</label>
-        <input type="date" name="data_entrada" required value="<?= e($_POST['data_entrada'] ?? date('Y-m-d')) ?>"
+        <input type="date" name="data_entrada" required value="<?= e($v['data_entrada']) ?>"
                class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
       </div>
       <div class="sm:col-span-2">
         <label class="block text-sm font-medium mb-1">Hora de entrada *</label>
-        <input type="time" name="hora_entrada" required value="<?= e($_POST['hora_entrada'] ?? date('H:i')) ?>"
+        <input type="time" name="hora_entrada" required value="<?= e(substr($v['hora_entrada'], 0, 5)) ?>"
                class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
       </div>
       <div class="sm:col-span-2">
         <label class="block text-sm font-medium mb-1">Previsão de saída (horas)</label>
         <input type="number" name="previsao_horas" min="0" max="240" step="1"
-               value="<?= (int)($_POST['previsao_horas'] ?? 0) ?>"
+               value="<?= (int)$v['previsao_horas'] ?>"
                class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
         <p class="mt-1 text-xs text-slate-500">0 = não definida.</p>
       </div>
@@ -370,13 +529,13 @@ require __DIR__ . '/header.php';
       <div>
         <label class="block text-sm font-medium mb-1">Observações do cliente</label>
         <textarea name="observacoes" rows="3" maxlength="1000"
-                  class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500"><?= e($_POST['observacoes'] ?? '') ?></textarea>
+                  class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500"><?= e($v['observacoes']) ?></textarea>
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Avarias / itens no veículo</label>
         <textarea name="avarias" rows="3" maxlength="1000"
                   placeholder="Ex.: riscado na porta direita, som no porta-malas..."
-                  class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500"><?= e($_POST['avarias'] ?? '') ?></textarea>
+                  class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500"><?= e($v['avarias']) ?></textarea>
       </div>
     </section>
 
@@ -407,12 +566,21 @@ require __DIR__ . '/header.php';
           </button>
         </div>
 
-        <!-- Lista de serviços escolhidos -->
         <div id="listaServicos"
              class="mt-4 rounded-lg border border-slate-200 divide-y divide-slate-100 empty:border-0">
-          <!-- preenchido via JS -->
+          <?php foreach ($itensAtuais as $it): ?>
+            <div class="flex items-center gap-3 px-4 py-3"
+                 data-id="<?= (int)$it['lavagem_id'] ?>"
+                 data-preco="<?= (int)$it['preco_centavos'] ?>">
+              <input type="hidden" name="servicos[]" value="<?= (int)$it['lavagem_id'] ?>">
+              <div class="flex-1 text-sm font-medium"><?= e($it['nome']) ?></div>
+              <div class="text-sm font-semibold whitespace-nowrap"><?= e(centavos_para_moeda_brl((int)$it['preco_centavos'])) ?></div>
+              <button type="button" class="btn-remover text-rose-600 hover:underline text-xs">Remover</button>
+            </div>
+          <?php endforeach; ?>
         </div>
-        <p id="listaVazia" class="text-xs text-slate-400 mt-3">
+        <p id="listaVazia" class="text-xs text-slate-400 mt-3"
+           style="<?= $itensAtuais ? 'display:none' : '' ?>">
           Nenhum serviço adicionado ainda.
         </p>
       <?php endif; ?>
@@ -426,10 +594,11 @@ require __DIR__ . '/header.php';
           <div class="flex gap-2">
             <select name="desconto_tipo" id="desconto_tipo"
                     class="rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
-              <option value="valor">R$</option>
-              <option value="percentual">%</option>
+              <option value="valor"      <?= $v['desconto_tipo'] === 'valor'      ? 'selected' : '' ?>>R$</option>
+              <option value="percentual" <?= $v['desconto_tipo'] === 'percentual' ? 'selected' : '' ?>>%</option>
             </select>
-            <input name="desconto" id="desconto" data-mask="money" inputmode="numeric" value="0"
+            <input name="desconto" id="desconto" inputmode="numeric"
+                   value="<?= e($v['desconto']) ?>"
                    class="flex-1 rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
           </div>
         </div>
@@ -446,7 +615,9 @@ require __DIR__ . '/header.php';
 
     <div class="flex justify-end gap-2 pt-2">
       <a href="entradas.php" class="px-4 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium">Cancelar</a>
-      <button class="px-5 py-2.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium">Registrar entrada</button>
+      <button class="px-5 py-2.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium">
+        <?= $editar ? 'Salvar alterações' : 'Registrar entrada' ?>
+      </button>
     </div>
   </form>
 </div>
@@ -463,13 +634,13 @@ require __DIR__ . '/header.php';
   };
   const brl = c => 'R$ ' + (c / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
-  /* ========== CLIENTE (livre ou da lista) ========== */
-  const inputNome  = document.getElementById('cliente_nome');
-  const inputCel   = document.getElementById('cliente_celular');
-  const hiddenCli  = document.getElementById('cliente_id');
-  const infoCli    = document.getElementById('clienteInfo');
-  const infoNome   = document.getElementById('cliInfoNome');
-  const listaCli   = document.getElementById('listaClientes');
+  /* ========== CLIENTE ========== */
+  const inputNome = document.getElementById('cliente_nome');
+  const inputCel  = document.getElementById('cliente_celular');
+  const hiddenCli = document.getElementById('cliente_id');
+  const infoCli   = document.getElementById('clienteInfo');
+  const infoNome  = document.getElementById('cliInfoNome');
+  const listaCli  = document.getElementById('listaClientes');
 
   function tentarVincularCliente() {
     const val = inputNome.value.trim();
@@ -481,7 +652,6 @@ require __DIR__ . '/header.php';
       hiddenCli.value = achou.dataset.id;
       infoNome.textContent = 'Vinculado: ' + achou.dataset.nome;
       infoCli.hidden = false;
-      // só preenche o celular se estiver vazio ou se for o mesmo cliente anterior
       if (!inputCel.value.trim() && achou.dataset.celular) {
         inputCel.value = achou.dataset.celular;
       }
@@ -490,10 +660,8 @@ require __DIR__ . '/header.php';
       infoCli.hidden = true;
     }
   }
-
   inputNome.addEventListener('input', tentarVincularCliente);
   inputNome.addEventListener('change', tentarVincularCliente);
-  tentarVincularCliente();
 
   /* ========== PLACA → APIBRASIL ========== */
   const placa = document.getElementById('placa');
@@ -522,7 +690,6 @@ require __DIR__ . '/header.php';
     placaStatus.className = 'absolute right-3 top-2.5 text-xs text-slate-400';
     placaMsg.textContent = 'Consultando APIBrasil...';
     vInfo.hidden = true;
-    manualBox.open = false;
     try {
       const r = await fetch('consultar_placa.php?placa=' + encodeURIComponent(p));
       const d = await r.json();
@@ -548,23 +715,25 @@ require __DIR__ . '/header.php';
     } catch (e) {
       placaStatus.textContent = '!';
       placaStatus.className = 'absolute right-3 top-2.5 text-xs text-amber-600';
-      placaMsg.textContent = 'Falha de conexão. Informe os dados manualmente.';
+      placaMsg.textContent = 'Falha de conexão.';
       manualBox.open = true;
     }
   }
 
-  /* ========== SERVIÇOS (select → lista) ========== */
-  const selServico  = document.getElementById('selServico');
-  const btnAdd      = document.getElementById('btnAddServico');
-  const listaEl     = document.getElementById('listaServicos');
-  const listaVazia  = document.getElementById('listaVazia');
-  const subtotalEl  = document.getElementById('subtotal');
-  const descEl      = document.getElementById('descView');
-  const totalEl     = document.getElementById('totalView');
-  const descInput   = document.getElementById('desconto');
-  const tipoDesc    = document.getElementById('desconto_tipo');
+  /* Se já existe placa (modo edição), carrega contadores e info do cache */
+  if (placa.value.length === 7) {
+    consultarPlaca();
+  }
 
+  /* ========== SERVIÇOS ========== */
+  const selServico = document.getElementById('selServico');
+  const btnAdd     = document.getElementById('btnAddServico');
+  const listaEl    = document.getElementById('listaServicos');
+  const listaVazia = document.getElementById('listaVazia');
   const adicionados = new Set();
+
+  // Popula o set com os itens já existentes (edição)
+  listaEl.querySelectorAll('[data-id]').forEach(el => adicionados.add(el.dataset.id));
 
   function atualizarEstadoVazio() {
     if (!listaVazia) return;
@@ -573,15 +742,11 @@ require __DIR__ . '/header.php';
 
   function adicionarServico() {
     if (!selServico || !selServico.value) return;
-    const id  = selServico.value;
-    if (adicionados.has(id)) {
-      alert('Esse serviço já foi adicionado.');
-      return;
-    }
+    const id = selServico.value;
+    if (adicionados.has(id)) { alert('Esse serviço já foi adicionado.'); return; }
     const opt   = selServico.options[selServico.selectedIndex];
     const nome  = opt.dataset.nome;
     const preco = parseInt(opt.dataset.preco, 10) || 0;
-
     adicionados.add(id);
 
     const row = document.createElement('div');
@@ -605,7 +770,6 @@ require __DIR__ . '/header.php';
   selServico?.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); adicionarServico(); }
   });
-
   listaEl?.addEventListener('click', e => {
     if (!e.target.classList.contains('btn-remover')) return;
     const row = e.target.closest('[data-id]');
@@ -615,13 +779,38 @@ require __DIR__ . '/header.php';
     recalcular();
   });
 
+  /* ========== DESCONTO ========== */
+  const descInput = document.getElementById('desconto');
+  const tipoDesc  = document.getElementById('desconto_tipo');
+  const subtotalEl = document.getElementById('subtotal');
+  const descEl     = document.getElementById('descView');
+  const totalEl    = document.getElementById('totalView');
+
+  function aplicarMascaraDesconto() {
+    if (tipoDesc.value === 'percentual') {
+      descInput.value = soDigitos(descInput.value).slice(0, 3);
+    } else {
+      descInput.value = maskMoney(descInput.value);
+    }
+  }
+  aplicarMascaraDesconto();
+
+  descInput.addEventListener('input', () => { aplicarMascaraDesconto(); recalcular(); });
+  tipoDesc.addEventListener('change', () => {
+    if (tipoDesc.value === 'percentual') {
+      descInput.value = '0';
+    } else {
+      descInput.value = '0,00';
+    }
+    recalcular();
+  });
+
   /* ========== TOTAIS ========== */
   function recalcular() {
     let sub = 0;
     listaEl.querySelectorAll('[data-preco]').forEach(el => {
       sub += parseInt(el.dataset.preco, 10) || 0;
     });
-
     let desc = 0;
     if (tipoDesc.value === 'percentual') {
       const p = Math.max(0, Math.min(100, parseInt(soDigitos(descInput.value), 10) || 0));
@@ -631,17 +820,10 @@ require __DIR__ . '/header.php';
       if (desc > sub) desc = sub;
     }
     const total = Math.max(0, sub - desc);
-
     subtotalEl.textContent = brl(sub);
     descEl.textContent     = '- ' + brl(desc);
     totalEl.textContent    = brl(total);
   }
-
-  descInput.addEventListener('input', recalcular);
-  tipoDesc.addEventListener('change', () => {
-    descInput.value = tipoDesc.value === 'percentual' ? '0' : '0,00';
-    recalcular();
-  });
 
   atualizarEstadoVazio();
   recalcular();
