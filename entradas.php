@@ -86,7 +86,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'pagar')
     }
 }
 
-
 /* =========================================================
  *  POST: alterar status (aberta / concluida / entregue)
  * ========================================================= */
@@ -103,7 +102,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'status'
             WHERE id = ?
         ")->execute([$status, $id]);
 
-        /* ---------- Enviar SMS quando concluir ---------- */
         if ($status === 'concluida') {
             $st = db()->prepare('SELECT * FROM lavagem_entradas WHERE id = ?');
             $st->execute([$id]);
@@ -152,7 +150,7 @@ $where  = [];
 $params = [];
 
 if ($busca !== '') {
-    $where[] = "(e.placa LIKE :q OR c.nome LIKE :q OR e.veiculo_manual_modelo LIKE :q)";
+    $where[] = "(e.placa LIKE :q OR c.nome LIKE :q OR e.cliente_nome_avulso LIKE :q OR e.veiculo_manual_modelo LIKE :q)";
     $params[':q'] = '%' . $busca . '%';
 }
 if (in_array($status, ['aberta', 'concluida', 'entregue'], true)) {
@@ -161,7 +159,7 @@ if (in_array($status, ['aberta', 'concluida', 'entregue'], true)) {
 }
 $sqlWhere = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
-$sql = "SELECT e.*, c.nome AS cliente_nome, c.celular AS cliente_celular
+$sql = "SELECT e.*, c.nome AS cliente_nome_cadastro
         FROM lavagem_entradas e
         LEFT JOIN clientes c ON c.id = e.cliente_id
         $sqlWhere
@@ -218,84 +216,105 @@ require __DIR__ . '/header.php';
         <tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">
           Nenhuma entrada registrada.
         </td></tr>
-      <?php else: foreach ($entradas as $en): ?>
-        <tr class="hover:bg-slate-50">
-          <td class="px-4 py-2.5 text-xs">
-            <div class="font-medium"><?= e(date('d/m/Y', strtotime($en['data_entrada']))) ?></div>
-            <div class="text-slate-500"><?= e(substr($en['hora_entrada'], 0, 5)) ?></div>
-            <?php if ($en['previsao_saida_datetime']): ?>
-              <div class="text-slate-400">prev. <?= e(date('d/m H:i', strtotime($en['previsao_saida_datetime']))) ?></div>
-            <?php endif; ?>
-          </td>
-          <td class="px-4 py-2.5">
-            <div class="font-medium"><?= e($en['cliente_nome'] ?? '—') ?></div>
-            <?php if ($en['cliente_celular']): ?>
-              <div class="text-xs text-slate-500"><?= e($en['cliente_celular']) ?></div>
-            <?php endif; ?>
-          </td>
-          <td class="px-4 py-2.5">
-            <div class="font-mono font-medium"><?= e(formatar_placa($en['placa'])) ?></div>
-            <?php $desc = trim(($en['veiculo_manual_marca'] ?? '') . ' ' . ($en['veiculo_manual_modelo'] ?? '')); ?>
-            <?php if ($desc): ?><div class="text-xs text-slate-500"><?= e($desc) ?></div><?php endif; ?>
-          </td>
-          <td class="px-4 py-2.5 text-right font-medium whitespace-nowrap">
-            <?= e(centavos_para_moeda_brl((int)$en['total_centavos'])) ?>
-            <?php if ($en['desconto_centavos'] > 0): ?>
-              <div class="text-xs text-rose-600 font-normal">
-                - <?= e(centavos_para_moeda_brl((int)$en['desconto_centavos'])) ?>
+      <?php else: ?>
+        <?php foreach ($entradas as $en): ?>
+          <?php
+            // Nome a exibir: cliente do cadastro ou nome avulso
+            $nomeExibir = $en['cliente_nome_cadastro'] ?: ($en['cliente_nome_avulso'] ?: '—');
+            $celExibir  = $en['cliente_celular'] ?? '';
+            $ehAvulso   = empty($en['cliente_id']);
+          ?>
+          <tr class="hover:bg-slate-50">
+            <td class="px-4 py-2.5 text-xs">
+              <div class="font-medium"><?= e(date('d/m/Y', strtotime($en['data_entrada']))) ?></div>
+              <div class="text-slate-500"><?= e(substr($en['hora_entrada'], 0, 5)) ?></div>
+              <?php if ($en['previsao_saida_datetime']): ?>
+                <div class="text-slate-400">prev. <?= e(date('d/m H:i', strtotime($en['previsao_saida_datetime']))) ?></div>
+              <?php endif; ?>
+            </td>
+            <td class="px-4 py-2.5">
+              <div class="font-medium">
+                <?= e($nomeExibir) ?>
+                <?php if ($ehAvulso && $nomeExibir !== '—'): ?>
+                  <span class="text-[10px] uppercase text-slate-400 ml-1">avulso</span>
+                <?php endif; ?>
               </div>
-            <?php endif; ?>
-          </td>
-          <td class="px-4 py-2.5">
-            <div class="flex flex-col gap-1">
-              <?php if ($en['status'] === 'aberta'): ?>
-                <span class="inline-block text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700 w-fit">Aberta</span>
-              <?php elseif ($en['status'] === 'concluida'): ?>
-                <span class="inline-block text-xs px-2 py-0.5 rounded bg-sky-100 text-sky-700 w-fit">Concluída</span>
-              <?php else: ?>
-                <span class="inline-block text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 w-fit">Entregue</span>
+              <?php if ($celExibir): ?>
+                <div class="text-xs text-slate-500"><?= e($celExibir) ?></div>
               <?php endif; ?>
-              <?php if ($en['pago']): ?>
-                <span class="inline-block text-xs px-2 py-0.5 rounded bg-emerald-600 text-white w-fit">Pago</span>
+            </td>
+            <td class="px-4 py-2.5">
+              <div class="font-mono font-medium"><?= e(formatar_placa($en['placa'])) ?></div>
+              <?php $desc = trim(($en['veiculo_manual_marca'] ?? '') . ' ' . ($en['veiculo_manual_modelo'] ?? '')); ?>
+              <?php if ($desc): ?><div class="text-xs text-slate-500"><?= e($desc) ?></div><?php endif; ?>
+            </td>
+            <td class="px-4 py-2.5 text-right font-medium whitespace-nowrap">
+              <?= e(centavos_para_moeda_brl((int)$en['total_centavos'])) ?>
+              <?php if ((int)$en['desconto_centavos'] > 0): ?>
+                <div class="text-xs text-rose-600 font-normal">
+                  - <?= e(centavos_para_moeda_brl((int)$en['desconto_centavos'])) ?>
+                </div>
               <?php endif; ?>
-            </div>
-          </td>
-          <td class="px-4 py-2.5 text-right whitespace-nowrap">
-            <?php if ($en['status'] === 'aberta'): ?>
-              <form method="post" class="inline">
-                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-                <input type="hidden" name="acao" value="status">
-                <input type="hidden" name="id" value="<?= (int)$en['id'] ?>">
-                <input type="hidden" name="status" value="concluida">
-                <button class="text-sky-600 hover:underline text-xs mr-2">Concluir</button>
-              </form>
-            <?php endif; ?>
-            <?php if ($en['status'] === 'concluida'): ?>
-              <form method="post" class="inline">
-                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-                <input type="hidden" name="acao" value="status">
-                <input type="hidden" name="id" value="<?= (int)$en['id'] ?>">
-                <input type="hidden" name="status" value="entregue">
-                <button class="text-emerald-600 hover:underline text-xs mr-2">Entregar</button>
-              </form>
-            <?php endif; ?>
+            </td>
+            <td class="px-4 py-2.5">
+              <div class="flex flex-col gap-1">
+                <?php if ($en['status'] === 'aberta'): ?>
+                  <span class="inline-block text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700 w-fit">Aberta</span>
+                <?php elseif ($en['status'] === 'concluida'): ?>
+                  <span class="inline-block text-xs px-2 py-0.5 rounded bg-sky-100 text-sky-700 w-fit">Concluída</span>
+                <?php else: ?>
+                  <span class="inline-block text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 w-fit">Entregue</span>
+                <?php endif; ?>
+                <?php if ($en['pago']): ?>
+                  <span class="inline-block text-xs px-2 py-0.5 rounded bg-emerald-600 text-white w-fit">Pago</span>
+                <?php endif; ?>
+              </div>
+            </td>
+            <td class="px-4 py-2.5 text-right whitespace-nowrap">
+              <!-- Editar -->
+              <a href="entrada_lavagem.php?id=<?= (int)$en['id'] ?>"
+                 class="text-slate-700 hover:underline text-xs mr-2">Editar</a>
 
-            <?php if (!$en['pago']): ?>
-              <button type="button"
-                      class="btn-pagar text-emerald-700 hover:underline text-xs mr-2"
-                      data-id="<?= (int)$en['id'] ?>"
-                      data-placa="<?= e(formatar_placa($en['placa'])) ?>"
-                      data-cliente="<?= e($en['cliente_nome'] ?? '—') ?>"
-                      data-total="<?= e(centavos_para_moeda((int)$en['total_centavos'])) ?>">
-                Marcar como pago
-              </button>
-            <?php else: ?>
-              <a href="recibo.php?entrada=<?= (int)$en['id'] ?>"
-                 class="text-slate-600 hover:underline text-xs mr-2">Recibo</a>
-            <?php endif; ?>
-          </td>
-        </tr>
-      <?php endforeach; endif; ?>
+              <!-- Concluir -->
+              <?php if ($en['status'] === 'aberta'): ?>
+                <form method="post" class="inline">
+                  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                  <input type="hidden" name="acao" value="status">
+                  <input type="hidden" name="id" value="<?= (int)$en['id'] ?>">
+                  <input type="hidden" name="status" value="concluida">
+                  <button class="text-sky-600 hover:underline text-xs mr-2">Concluir</button>
+                </form>
+              <?php endif; ?>
+
+              <!-- Entregar -->
+              <?php if ($en['status'] === 'concluida'): ?>
+                <form method="post" class="inline">
+                  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                  <input type="hidden" name="acao" value="status">
+                  <input type="hidden" name="id" value="<?= (int)$en['id'] ?>">
+                  <input type="hidden" name="status" value="entregue">
+                  <button class="text-emerald-600 hover:underline text-xs mr-2">Entregar</button>
+                </form>
+              <?php endif; ?>
+
+              <!-- Pagar / Recibo -->
+              <?php if (!$en['pago']): ?>
+                <button type="button"
+                        class="btn-pagar text-emerald-700 hover:underline text-xs mr-2"
+                        data-id="<?= (int)$en['id'] ?>"
+                        data-placa="<?= e(formatar_placa($en['placa'])) ?>"
+                        data-cliente="<?= e($nomeExibir) ?>"
+                        data-total="<?= e(centavos_para_moeda((int)$en['total_centavos'])) ?>">
+                  Marcar como pago
+                </button>
+              <?php else: ?>
+                <a href="recibo.php?entrada=<?= (int)$en['id'] ?>"
+                   class="text-slate-600 hover:underline text-xs mr-2">Recibo</a>
+              <?php endif; ?>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      <?php endif; ?>
       </tbody>
     </table>
   </div>
@@ -386,8 +405,8 @@ require __DIR__ . '/header.php';
 
   document.querySelectorAll('.btn-pagar').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.getElementById('pgEntradaId').value    = btn.dataset.id;
-      document.getElementById('pgPlaca').textContent  = btn.dataset.placa;
+      document.getElementById('pgEntradaId').value     = btn.dataset.id;
+      document.getElementById('pgPlaca').textContent   = btn.dataset.placa;
       document.getElementById('pgCliente').textContent = btn.dataset.cliente;
       valor.value = btn.dataset.total;
       modal.classList.remove('hidden');

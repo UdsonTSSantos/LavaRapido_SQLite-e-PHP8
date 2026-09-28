@@ -800,3 +800,114 @@ function sms_veiculo_pronto(array $entrada, ?array $empresa = null): string {
     $placa = formatar_placa($entrada['placa']);
     return "Ola! Seu veiculo {$placa} esta pronto para retirada em {$nome}. Obrigado!";
 }
+
+/* =========================================================
+ *  USUÁRIOS — tabela, migração e helpers
+ * ========================================================= */
+
+/** Garante a tabela usuarios e adiciona as colunas nome/cpf/celular. */
+function ensure_usuarios(): void {
+    static $ok = false;
+    if ($ok) return;
+
+    $pdo = db();
+
+    /* ---------- Cria a tabela base se não existir ---------- */
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            senha_hash TEXT NOT NULL,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            precisa_trocar_senha INTEGER NOT NULL DEFAULT 1,
+            ativo INTEGER NOT NULL DEFAULT 1,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    ");
+
+    /* ---------- Migração: colunas em texto puro ---------- */
+    $cols = $pdo->query("PRAGMA table_info(usuarios)")
+                ->fetchAll(PDO::FETCH_COLUMN, 1);
+
+    $novas = [
+        'nome'    => "TEXT NOT NULL DEFAULT ''",
+        'cpf'     => "TEXT NOT NULL DEFAULT ''",
+        'celular' => "TEXT NOT NULL DEFAULT ''",
+    ];
+    foreach ($novas as $col => $def) {
+        if (!in_array($col, $cols, true)) {
+            try { $pdo->exec("ALTER TABLE usuarios ADD COLUMN $col $def"); }
+            catch (PDOException $ex) {
+                if (!str_contains($ex->getMessage(), 'duplicate column')) throw $ex;
+            }
+        }
+    }
+    $ok = true;
+}
+
+/** Retorna um usuário pelo id (dados já em texto puro). */
+function usuario_completo(int $id): ?array {
+    ensure_usuarios();
+    $st = db()->prepare('SELECT * FROM usuarios WHERE id = ?');
+    $st->execute([$id]);
+    return $st->fetch() ?: null;
+}
+
+/** Lista usuários em ordem alfabética. */
+function listar_usuarios(): array {
+    ensure_usuarios();
+    return db()->query(
+        'SELECT * FROM usuarios ORDER BY nome COLLATE NOCASE, email COLLATE NOCASE'
+    )->fetchAll();
+}
+
+/** Formata CPF (11 dígitos) ou CNPJ (14) já cadastrado. */
+function formatar_doc_usuario(string $doc): string {
+    $d = preg_replace('/\D/', '', $doc);
+    if (strlen($d) === 11) return formatar_cpf($d);
+    if (strlen($d) === 14) return formatar_cnpj($d);
+    return $doc;
+}
+
+/** Formata celular/telefone. */
+function formatar_fone_usuario(string $fone): string {
+    $f = preg_replace('/\D/', '', $fone);
+    if (strlen($f) === 11) return '(' . substr($f,0,2) . ') ' . substr($f,2,5) . '-' . substr($f,7);
+    if (strlen($f) === 10) return '(' . substr($f,0,2) . ') ' . substr($f,2,4) . '-' . substr($f,6);
+    return $fone;
+}
+
+/* =========================================================
+ *  GERAÇÃO DE SENHA TEMPORÁRIA
+ * ========================================================= */
+
+/**
+ * Gera uma senha temporária forte, legível e que atende à regra
+ * (mín. 8 caracteres, com letra e número).
+ *
+ * - Remove caracteres ambíguos (i, l, o, 0, 1)
+ * - Garante pelo menos 1 maiúscula, 1 minúscula, 1 número e 1 especial
+ */
+function gerar_senha_temporaria(int $tamanho = 10): string {
+    if ($tamanho < 8) $tamanho = 8;
+
+    $minusculas = 'abcdefghjkmnpqrstuvwxyz';        // sem i, l, o
+    $maiusculas = 'ABCDEFGHJKLMNPQRSTUVWXYZ';       // sem I, O
+    $numeros    = '23456789';                       // sem 0, 1
+    $especiais  = '!@#$%&*';
+
+    $senha = [
+        $minusculas[random_int(0, strlen($minusculas) - 1)],
+        $maiusculas[random_int(0, strlen($maiusculas) - 1)],
+        $numeros   [random_int(0, strlen($numeros)    - 1)],
+        $especiais [random_int(0, strlen($especiais)  - 1)],
+    ];
+
+    $todos = $minusculas . $maiusculas . $numeros . $especiais;
+    while (count($senha) < $tamanho) {
+        $senha[] = $todos[random_int(0, strlen($todos) - 1)];
+    }
+
+    shuffle($senha);
+    return implode('', $senha);
+}
