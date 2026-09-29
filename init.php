@@ -273,3 +273,10 @@ if (!is_dir($dir)) {
  *  FIM
  * ========================================================= */
 echo "\n🎉 Instalação concluída. Acesse o sistema.\n";
+
+
+/* =========================================================
+ *  PAGAMENTOS — cria tabelas e categorias padrão
+ * ========================================================= */
+ensure_pagamentos();
+echo "✅ Tabelas de pagamentos e categorias padrão prontas.\n";

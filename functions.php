@@ -911,3 +911,236 @@ function gerar_senha_temporaria(int $tamanho = 10): string {
     shuffle($senha);
     return implode('', $senha);
 }
+
+/* =========================================================
+ *  PAGAMENTOS / DESPESAS
+ * ========================================================= */
+
+/** Garante as tabelas de pagamentos e categorias. */
+function ensure_pagamentos(): void {
+    static $ok = false;
+    if ($ok) return;
+
+    $pdo = db();
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS categorias_pagamento (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL UNIQUE,
+            cor TEXT NOT NULL DEFAULT '#64748b',
+            icone TEXT NOT NULL DEFAULT '📄',
+            ativo INTEGER NOT NULL DEFAULT 1,
+            ordem INTEGER NOT NULL DEFAULT 0,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS pagamentos_despesas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tipo_pessoa TEXT NOT NULL DEFAULT 'avulso',
+            pessoa_id INTEGER,
+            pessoa_nome TEXT NOT NULL DEFAULT '',
+            categoria_id INTEGER NOT NULL,
+            descricao TEXT NOT NULL DEFAULT '',
+            documento TEXT NOT NULL DEFAULT '',
+            valor_centavos INTEGER NOT NULL DEFAULT 0,
+            data_vencimento TEXT NOT NULL,
+            data_pagamento TEXT NOT NULL DEFAULT '',
+            forma_pagamento TEXT NOT NULL DEFAULT '',
+            observacoes TEXT NOT NULL DEFAULT '',
+            criado_por INTEGER,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            atualizado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    ");
+
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_pag_venc    ON pagamentos_despesas(data_vencimento)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_pag_pgto    ON pagamentos_despesas(data_pagamento)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_pag_cat     ON pagamentos_despesas(categoria_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_pag_pessoa  ON pagamentos_despesas(tipo_pessoa, pessoa_id)");
+
+    /* ---------- Seed de categorias padrão (só se ainda não existir nenhuma) ---------- */
+    $qtd = (int)$pdo->query('SELECT COUNT(*) FROM categorias_pagamento')->fetchColumn();
+    if ($qtd === 0) {
+        $seed = [
+            ['Energia',               '#f59e0b', '💡', 1],
+            ['Água',                  '#0ea5e9', '💧', 2],
+            ['Combustível',           '#ef4444', '⛽', 3],
+            ['Comissão',              '#22c55e', '💰', 4],
+            ['Aluguel',               '#8b5cf6', '🏠', 5],
+            ['Internet',              '#06b6d4', '🌐', 6],
+            ['Telefone',              '#3b82f6', '📞', 7],
+            ['Manutenção',            '#64748b', '🔧', 8],
+            ['Produtos de Limpeza',   '#14b8a6', '🧴', 9],
+            ['Impostos',              '#a16207', '🏛️', 10],
+            ['Salários',              '#7c3aed', '👥', 11],
+            ['Marketing',             '#ec4899', '📢', 12],
+            ['Outros',                '#94a3b8', '📄', 99],
+        ];
+        $ins = $pdo->prepare(
+            'INSERT INTO categorias_pagamento (nome, cor, icone, ordem) VALUES (?, ?, ?, ?)'
+        );
+        foreach ($seed as $s) $ins->execute($s);
+    }
+
+    $ok = true;
+}
+
+/** Lista todas as categorias (ativas primeiro). */
+function listar_categorias_pagamento(bool $somenteAtivas = false): array {
+    ensure_pagamentos();
+    $sql = 'SELECT * FROM categorias_pagamento';
+    if ($somenteAtivas) $sql .= ' WHERE ativo = 1';
+    $sql .= ' ORDER BY ativo DESC, ordem, nome COLLATE NOCASE';
+    return db()->query($sql)->fetchAll();
+}
+
+function buscar_categoria_pagamento(int $id): ?array {
+    ensure_pagamentos();
+    $st = db()->prepare('SELECT * FROM categorias_pagamento WHERE id = ?');
+    $st->execute([$id]);
+    return $st->fetch() ?: null;
+}
+
+/** Determina o status dinâmico de um pagamento. */
+function status_pagamento(array $p): string {
+    if (!empty($p['data_pagamento'])) return 'pago';
+    $hoje = date('Y-m-d');
+    return $p['data_vencimento'] < $hoje ? 'atrasado' : 'pendente';
+}
+
+/** Formata o rótulo da pessoa vinculada. */
+function rotulo_pessoa_pagamento(array $p): string {
+    $nome = $p['pessoa_nome'] ?: '—';
+    $tipo = $p['tipo_pessoa'] ?? 'avulso';
+    $tag = [
+        'usuario'    => 'Usuário',
+        'fornecedor' => 'Fornecedor',
+        'cliente'    => 'Cliente',
+        'avulso'     => 'Avulso',
+    ][$tipo] ?? 'Avulso';
+    return $nome . ' (' . $tag . ')';
+}
+
+/** Retorna métricas para o dashboard. */
+function metricas_pagamentos(): array {
+    ensure_pagamentos();
+    $pdo = db();
+
+    $hoje   = date('Y-m-d');
+    $amanha = date('Y-m-d', strtotime('+1 day'));
+    $anoMes = date('Y-m');
+
+    $m = [];
+
+    // Total pago no mês atual
+    $st = $pdo->prepare("
+        SELECT COALESCE(SUM(valor_centavos),0) FROM pagamentos_despesas
+        WHERE data_pagamento LIKE :mes
+    ");
+    $st->execute([':mes' => $anoMes . '%']);
+    $m['pago_mes'] = (int)$st->fetchColumn();
+
+    // Total pendente do mês (vencimento no mês, sem pagamento)
+    $st = $pdo->prepare("
+        SELECT COALESCE(SUM(valor_centavos),0) FROM pagamentos_despesas
+        WHERE data_pagamento = ''
+          AND data_vencimento LIKE :mes
+    ");
+    $st->execute([':mes' => $anoMes . '%']);
+    $m['pendente_mes'] = (int)$st->fetchColumn();
+
+    // Total em atraso (qualquer data)
+    $st = $pdo->prepare("
+        SELECT COALESCE(SUM(valor_centavos),0), COUNT(*)
+        FROM pagamentos_despesas
+        WHERE data_pagamento = ''
+          AND data_vencimento < :hoje
+    ");
+    $st->execute([':hoje' => $hoje]);
+    $row = $st->fetch(PDO::FETCH_NUM);
+    $m['atraso_total']  = (int)$row[0];
+    $m['atraso_qtd']    = (int)$row[1];
+
+    // Vencendo hoje
+    $st = $pdo->prepare("
+        SELECT COALESCE(SUM(valor_centavos),0), COUNT(*)
+        FROM pagamentos_despesas
+        WHERE data_pagamento = '' AND data_vencimento = :hoje
+    ");
+    $st->execute([':hoje' => $hoje]);
+    $row = $st->fetch(PDO::FETCH_NUM);
+    $m['vence_hoje_total'] = (int)$row[0];
+    $m['vence_hoje_qtd']   = (int)$row[1];
+
+    // Vencendo amanhã
+    $st = $pdo->prepare("
+        SELECT COALESCE(SUM(valor_centavos),0), COUNT(*)
+        FROM pagamentos_despesas
+        WHERE data_pagamento = '' AND data_vencimento = :amanha
+    ");
+    $st->execute([':amanha' => $amanha]);
+    $row = $st->fetch(PDO::FETCH_NUM);
+    $m['vence_amanha_total'] = (int)$row[0];
+    $m['vence_amanha_qtd']   = (int)$row[1];
+
+    return $m;
+}
+
+/** Lista pagamentos com filtros. */
+function listar_pagamentos(array $f = []): array {
+    ensure_pagamentos();
+    $where  = [];
+    $params = [];
+
+    if (!empty($f['status'])) {
+        if ($f['status'] === 'pago') {
+            $where[] = "p.data_pagamento <> ''";
+        } elseif ($f['status'] === 'pendente') {
+            $where[] = "p.data_pagamento = '' AND p.data_vencimento >= :hoje";
+            $params[':hoje'] = date('Y-m-d');
+        } elseif ($f['status'] === 'atrasado') {
+            $where[] = "p.data_pagamento = '' AND p.data_vencimento < :hoje";
+            $params[':hoje'] = date('Y-m-d');
+        }
+    }
+    if (!empty($f['categoria_id'])) {
+        $where[] = 'p.categoria_id = :cat';
+        $params[':cat'] = (int)$f['categoria_id'];
+    }
+    if (!empty($f['tipo_pessoa'])) {
+        $where[] = 'p.tipo_pessoa = :tp';
+        $params[':tp'] = $f['tipo_pessoa'];
+    }
+    if (!empty($f['de'])) {
+        $where[] = 'p.data_vencimento >= :de';
+        $params[':de'] = $f['de'];
+    }
+    if (!empty($f['ate'])) {
+        $where[] = 'p.data_vencimento <= :ate';
+        $params[':ate'] = $f['ate'];
+    }
+    if (!empty($f['q'])) {
+        $where[] = '(p.descricao LIKE :q OR p.pessoa_nome LIKE :q OR p.documento LIKE :q)';
+        $params[':q'] = '%' . $f['q'] . '%';
+    }
+
+    $sqlWhere = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+    $sql = "SELECT p.*, c.nome AS categoria_nome, c.cor AS categoria_cor, c.icone AS categoria_icone
+            FROM pagamentos_despesas p
+            LEFT JOIN categorias_pagamento c ON c.id = p.categoria_id
+            $sqlWhere
+            ORDER BY p.data_vencimento ASC, p.id DESC";
+
+    $st = db()->prepare($sql);
+    $st->execute($params);
+    return $st->fetchAll();
+}
+
+function buscar_pagamento(int $id): ?array {
+    ensure_pagamentos();
+    $st = db()->prepare('SELECT * FROM pagamentos_despesas WHERE id = ?');
+    $st->execute([$id]);
+    return $st->fetch() ?: null;
+}
