@@ -1,0 +1,4 @@
+2026-10-02 01:57:08 | email=[suporte@ast7.com.br] | len_senha=10
+2026-10-02 01:57:08 | autenticar retornou ok=0 erro=Credenciais inválidas.
+2026-10-02 02:12:04 | email=[suporte@ast7.com.br] | len_senha=14
+2026-10-02 02:12:04 | autenticar retornou ok=1 erro=-

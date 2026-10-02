@@ -43,6 +43,23 @@ define('APIBRASIL_BEARER_TOKEN', getenv('APIBRASIL_BEARER_TOKEN') ?: '');
 define('APIBRASIL_DEVICE_TOKEN', getenv('APIBRASIL_DEVICE_TOKEN') ?: '');
 define('APIBRASIL_BASE_URL',     'https://apibrasil.io/api/v1');
 
+
+/* =========================================================
+ *  AUTENTICAÇÃO
+ *  Modo: 'local'  → valida no banco SQLite (padrão)
+ *        'api'    → valida em uma API remota
+ *
+ *  Para ativar a API, mude AUTH_MODE para 'api' e informe
+ *  AUTH_API_URL e AUTH_API_KEY.
+ * ========================================================= */
+defined('AUTH_MODE')        || define('AUTH_MODE',        getenv('AUTH_MODE')        ?: 'local');
+defined('AUTH_API_URL')     || define('AUTH_API_URL',     getenv('AUTH_API_URL')     ?: '');
+defined('AUTH_API_KEY')     || define('AUTH_API_KEY',     getenv('AUTH_API_KEY')     ?: '');
+defined('AUTH_API_TIMEOUT') || define('AUTH_API_TIMEOUT', 8);
+
+
+
+
 /* =========================================================
  *  SMS — aviso ao cliente quando a lavagem estiver pronta
  *

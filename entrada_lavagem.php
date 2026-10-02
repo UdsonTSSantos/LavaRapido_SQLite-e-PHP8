@@ -33,7 +33,9 @@ if ($editar) {
 
 $erros = [];
 
-/* ---------- POST: salvar (novo ou edição) ---------- */
+/* =========================================================
+ *  POST: salvar
+ * ========================================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar') {
     csrf_validar();
 
@@ -67,7 +69,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
         if (!$stC->fetch()) $cliente_id = 0;
     }
 
-    /* Monta itens com preços atuais */
     $itens = [];
     $subtotal = 0;
     if (!$erros) {
@@ -86,7 +87,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
         if (!$itens) $erros[] = 'Nenhum dos serviços escolhidos está ativo.';
     }
 
-    /* Desconto */
     $desc_centavos = 0;
     $desc_percent  = 0;
     if (!$erros) {
@@ -100,7 +100,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
     }
     $total = max(0, $subtotal - $desc_centavos);
 
-    /* Previsão de saída */
     $prev_dt = '';
     if (!$erros && $horas_prev > 0) {
         $ts = strtotime("$data_entrada $hora_entrada");
@@ -108,7 +107,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
     }
 
     if (!$erros) {
-        /* Veículo: cache local ou dados manuais */
         $veiculo_id = null;
         $vLocal = buscar_veiculo_por_placa($placa);
         if ($vLocal) {
@@ -130,7 +128,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
         $pdo->beginTransaction();
         try {
             if ($editar) {
-                /* ---------- UPDATE ---------- */
                 $pdo->prepare("
                     UPDATE lavagem_entradas SET
                         cliente_id = :cid,
@@ -177,7 +174,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
                     ':id'     => $id,
                 ]);
 
-                /* Substitui itens: apaga os antigos e insere os novos */
                 $pdo->prepare('DELETE FROM lavagem_itens WHERE entrada_id = ?')->execute([$id]);
 
                 $ins = $pdo->prepare(
@@ -190,7 +186,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
                 $entrada_id = $id;
                 $mensagem = 'Entrada atualizada com sucesso.';
             } else {
-                /* ---------- INSERT ---------- */
                 $stmt = $pdo->prepare("
                     INSERT INTO lavagem_entradas
                         (cliente_id, cliente_nome_avulso, cliente_celular, placa, veiculo_id,
@@ -252,25 +247,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar'
         }
     }
 
-    /* Se deu erro no POST, reaproveita os valores digitados */
     $entrada = array_merge($entrada ?? [], [
-        'cliente_id'          => $cliente_id,
-        'cliente_nome_avulso' => $cliente_nome,
-        'cliente_celular'     => $cliente_celular,
-        'placa'               => $placa,
-        'data_entrada'        => $data_entrada,
-        'hora_entrada'        => $hora_entrada,
-        'previsao_saida_horas'=> $horas_prev,
-        'observacoes'         => $observacoes,
-        'avarias'             => $avarias,
-        'veiculo_manual_marca'=> $m_marca,
+        'cliente_id'           => $cliente_id,
+        'cliente_nome_avulso'  => $cliente_nome,
+        'cliente_celular'      => $cliente_celular,
+        'placa'                => $placa,
+        'data_entrada'         => $data_entrada,
+        'hora_entrada'         => $hora_entrada,
+        'previsao_saida_horas' => $horas_prev,
+        'observacoes'          => $observacoes,
+        'avarias'              => $avarias,
+        'veiculo_manual_marca' => $m_marca,
         'veiculo_manual_modelo'=> $m_modelo,
-        'veiculo_manual_cor'  => $m_cor,
-        'veiculo_manual_ano'  => $m_ano,
+        'veiculo_manual_cor'   => $m_cor,
+        'veiculo_manual_ano'   => $m_ano,
     ]);
 }
 
-/* ---------- Dados para a tela ---------- */
+/* =========================================================
+ *  Dados para a tela
+ * ========================================================= */
 $clientes = db()->query(
     'SELECT id, nome, cpf_cnpj, tipo, celular, telefone, email
      FROM clientes WHERE ativo = 1 ORDER BY nome COLLATE NOCASE'
@@ -280,24 +276,22 @@ $servicos = db()->query(
     'SELECT * FROM lavagens WHERE ativo = 1 ORDER BY nome COLLATE NOCASE'
 )->fetchAll();
 
-/* ---------- Valores iniciais do formulário ---------- */
 $v = [
-    'cliente_id'          => $entrada['cliente_id']          ?? 0,
-    'cliente_nome'        => $entrada['cliente_nome_avulso'] ?? '',
-    'cliente_celular'     => $entrada['cliente_celular']     ?? '',
-    'placa'               => $entrada['placa']               ?? '',
-    'data_entrada'        => $entrada['data_entrada']        ?? date('Y-m-d'),
-    'hora_entrada'        => $entrada['hora_entrada']        ?? date('H:i'),
-    'previsao_horas'      => (int)($entrada['previsao_saida_horas'] ?? 0),
-    'observacoes'         => $entrada['observacoes']         ?? '',
-    'avarias'             => $entrada['avarias']             ?? '',
-    'manual_marca'        => $entrada['veiculo_manual_marca']  ?? '',
-    'manual_modelo'       => $entrada['veiculo_manual_modelo'] ?? '',
-    'manual_cor'          => $entrada['veiculo_manual_cor']    ?? '',
-    'manual_ano'          => $entrada['veiculo_manual_ano']    ?? '',
+    'cliente_id'           => $entrada['cliente_id']          ?? 0,
+    'cliente_nome'         => $entrada['cliente_nome_avulso'] ?? '',
+    'cliente_celular'      => $entrada['cliente_celular']     ?? '',
+    'placa'                => $entrada['placa']               ?? '',
+    'data_entrada'         => $entrada['data_entrada']        ?? date('Y-m-d'),
+    'hora_entrada'         => $entrada['hora_entrada']        ?? date('H:i'),
+    'previsao_horas'       => (int)($entrada['previsao_saida_horas'] ?? 0),
+    'observacoes'          => $entrada['observacoes']         ?? '',
+    'avarias'              => $entrada['avarias']             ?? '',
+    'manual_marca'         => $entrada['veiculo_manual_marca']  ?? '',
+    'manual_modelo'        => $entrada['veiculo_manual_modelo'] ?? '',
+    'manual_cor'           => $entrada['veiculo_manual_cor']    ?? '',
+    'manual_ano'           => $entrada['veiculo_manual_ano']    ?? '',
 ];
 
-/* Desconto */
 $descPercent = (int)($entrada['desconto_percentual'] ?? 0);
 $descCent    = (int)($entrada['desconto_centavos']   ?? 0);
 if ($descPercent > 0) {
@@ -308,7 +302,6 @@ if ($descPercent > 0) {
     $v['desconto']      = $descCent > 0 ? centavos_para_moeda($descCent) : '0,00';
 }
 
-/* Quando estamos em POST com erro, sobrescreve os valores do desconto */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $v['desconto_tipo'] = $_POST['desconto_tipo'] ?? $v['desconto_tipo'];
     $v['desconto']      = $_POST['desconto']      ?? $v['desconto'];
@@ -319,39 +312,6 @@ $pago = (int)($entrada['pago'] ?? 0);
 $titulo = $editar ? 'Editar entrada de lavagem' : 'Nova entrada de lavagem';
 require __DIR__ . '/header.php';
 ?>
-
-<script>
-/* ========= MÁSCARAS ========= */
-(function () {
-  const soDigitos = v => (v || '').replace(/\D+/g, '');
-  const Mask = {
-    celular(v) {
-      v = soDigitos(v).slice(0, 11);
-      v = v.replace(/^(\d{2})(\d)/, '($1) $2');
-      v = v.replace(/(\d{5})(\d)/, '$1-$2');
-      return v;
-    },
-    money(v) {
-      v = soDigitos(v);
-      if (v === '') return '';
-      v = v.padStart(3, '0');
-      const int = v.slice(0, -2), dec = v.slice(-2);
-      return int.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + dec;
-    }
-  };
-  window.Mask = Mask;
-  document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('[data-mask]').forEach(el => {
-      const fn = Mask[el.dataset.mask];
-      if (typeof fn !== 'function') return;
-      const exec = () => { el.value = fn(el.value); };
-      el.addEventListener('input', exec);
-      el.addEventListener('blur',  exec);
-      exec();
-    });
-  });
-})();
-</script>
 
 <div class="max-w-5xl mx-auto">
   <form method="post" id="formEntrada" class="bg-white rounded-xl shadow p-6 sm:p-8 space-y-6" novalidate>
@@ -373,7 +333,6 @@ require __DIR__ . '/header.php';
     <?php if ($editar && $pago): ?>
       <div class="rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm">
         <strong>Atenção:</strong> esta entrada já foi marcada como <strong>paga</strong>.
-        Alterações nos serviços e valores <u>não</u> são refletidas automaticamente no pagamento já registrado.
       </div>
     <?php endif; ?>
 
@@ -385,7 +344,7 @@ require __DIR__ . '/header.php';
       </div>
     <?php endif; ?>
 
-    <!-- ============ CLIENTE ============ -->
+    <!-- CLIENTE -->
     <section class="grid gap-4 sm:grid-cols-2 pt-2 border-t border-slate-200">
       <h2 class="sm:col-span-2 text-sm font-semibold text-slate-700">Cliente</h2>
 
@@ -405,13 +364,13 @@ require __DIR__ . '/header.php';
           <?php endforeach; ?>
         </datalist>
         <p class="mt-1 text-xs text-slate-500">
-          Você pode <strong>escolher da lista</strong> (alfabética) ou <strong>digitar livremente</strong>.
+          Escolha da lista (alfabética) ou digite livremente.
         </p>
       </div>
 
       <div>
         <label class="block text-sm font-medium mb-1">Celular do cliente</label>
-        <input type="text" name="cliente_celular" id="cliente_celular" data-mask="celular"
+        <input type="text" name="cliente_celular" id="cliente_celular"
                inputmode="numeric" maxlength="16"
                value="<?= e($v['cliente_celular']) ?>"
                placeholder="(00) 00000-0000"
@@ -435,12 +394,12 @@ require __DIR__ . '/header.php';
               }
             ?>
           </div>
-          <div class="text-xs text-emerald-700">Cliente vinculado ao cadastro — celular preenchido automaticamente.</div>
+          <div class="text-xs text-emerald-700">Cliente vinculado ao cadastro.</div>
         </div>
       </div>
     </section>
 
-    <!-- ============ VEÍCULO / PLACA ============ -->
+    <!-- VEÍCULO -->
     <section class="grid gap-4 sm:grid-cols-6 pt-2 border-t border-slate-200">
       <h2 class="sm:col-span-6 text-sm font-semibold text-slate-700">Veículo</h2>
 
@@ -453,7 +412,7 @@ require __DIR__ . '/header.php';
                  class="w-full rounded-lg border border-slate-300 px-3 py-2.5 uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-sky-500">
           <span id="placaStatus" class="absolute right-3 top-2.5 text-xs text-slate-400"></span>
         </div>
-        <p class="mt-1 text-xs text-slate-500">Ao digitar, consulta automaticamente a base APIBrasil.</p>
+        <p class="mt-1 text-xs text-slate-500">Consulta automática na APIBrasil.</p>
       </div>
 
       <div class="sm:col-span-4">
@@ -481,7 +440,7 @@ require __DIR__ . '/header.php';
 
       <details class="sm:col-span-6 mt-2" id="manualBox" <?= (empty($v['manual_marca']) && empty($v['manual_modelo']) && empty($v['manual_cor']) && empty($v['manual_ano'])) ? '' : 'open' ?>>
         <summary class="cursor-pointer text-sm text-slate-600 hover:text-sky-600">
-          Placa não encontrada? Informe os dados do veículo manualmente
+          Placa não encontrada? Informe os dados manualmente
         </summary>
         <div class="mt-3 grid gap-3 sm:grid-cols-4">
           <div><label class="block text-xs font-medium mb-1">Marca</label>
@@ -500,7 +459,7 @@ require __DIR__ . '/header.php';
       </details>
     </section>
 
-    <!-- ============ DATAS ============ -->
+    <!-- DATAS -->
     <section class="grid gap-4 sm:grid-cols-6 pt-2 border-t border-slate-200">
       <h2 class="sm:col-span-6 text-sm font-semibold text-slate-700">Entrada e previsão</h2>
 
@@ -523,7 +482,7 @@ require __DIR__ . '/header.php';
       </div>
     </section>
 
-    <!-- ============ OBSERVAÇÕES ============ -->
+    <!-- OBSERVAÇÕES -->
     <section class="grid gap-4 sm:grid-cols-2 pt-2 border-t border-slate-200">
       <h2 class="sm:col-span-2 text-sm font-semibold text-slate-700">Observações</h2>
       <div>
@@ -539,7 +498,7 @@ require __DIR__ . '/header.php';
       </div>
     </section>
 
-    <!-- ============ SERVIÇOS ============ -->
+    <!-- SERVIÇOS -->
     <section class="pt-2 border-t border-slate-200">
       <h2 class="text-sm font-semibold text-slate-700 mb-3">Serviços a realizar *</h2>
 
@@ -586,7 +545,7 @@ require __DIR__ . '/header.php';
       <?php endif; ?>
     </section>
 
-    <!-- ============ TOTAIS ============ -->
+    <!-- TOTAIS -->
     <section class="pt-2 border-t border-slate-200">
       <div class="grid gap-4 sm:grid-cols-3">
         <div class="sm:col-span-2">
@@ -624,28 +583,58 @@ require __DIR__ . '/header.php';
 
 <script>
 (function () {
-  const soDigitos = v => (v || '').replace(/\D+/g, '');
-  const maskMoney = v => {
-    v = soDigitos(v);
-    if (v === '') return '';
-    v = v.padStart(3, '0');
-    const int = v.slice(0, -2), dec = v.slice(-2);
-    return int.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + dec;
-  };
-  const brl = c => 'R$ ' + (c / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  /* ========= HELPERS ========= */
+  function soDigitos(v) {
+    return String(v || '').replace(/\D+/g, '');
+  }
 
-  /* ========== CLIENTE ========== */
-  const inputNome = document.getElementById('cliente_nome');
-  const inputCel  = document.getElementById('cliente_celular');
-  const hiddenCli = document.getElementById('cliente_id');
-  const infoCli   = document.getElementById('clienteInfo');
-  const infoNome  = document.getElementById('cliInfoNome');
-  const listaCli  = document.getElementById('listaClientes');
+  function brl(centavos) {
+    return 'R$ ' + (centavos / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  }
+
+  function formatarMoedaBR(v) {
+    v = String(v || '').trim();
+    if (v === '') return '';
+    if (v.indexOf(',') !== -1) {
+      var partes = v.split(',');
+      var int = partes[0].replace(/\D/g, '') || '0';
+      var dec = (partes[1].replace(/\D/g, '') + '00').slice(0, 2);
+      return int.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + dec;
+    }
+    var dig = v.replace(/\D/g, '');
+    if (dig === '') return '';
+    return dig.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',00';
+  }
+
+  function mascararCelular(v) {
+    v = soDigitos(v).slice(0, 11);
+    if (v.length <= 2) return v;
+    if (v.length <= 7) return '(' + v.slice(0, 2) + ') ' + v.slice(2);
+    if (v.length <= 10) return '(' + v.slice(0, 2) + ') ' + v.slice(2, 6) + '-' + v.slice(6);
+    return '(' + v.slice(0, 2) + ') ' + v.slice(2, 7) + '-' + v.slice(7);
+  }
+
+  /* ========= APLICA MÁSCARAS ========= */
+  var celInput = document.getElementById('cliente_celular');
+  if (celInput) {
+    var aplicarCel = function () { celInput.value = mascararCelular(celInput.value); };
+    celInput.addEventListener('input', aplicarCel);
+    celInput.addEventListener('blur', aplicarCel);
+    aplicarCel();
+  }
+
+  /* ========= CLIENTE ========= */
+  var inputNome  = document.getElementById('cliente_nome');
+  var inputCel   = document.getElementById('cliente_celular');
+  var hiddenCli  = document.getElementById('cliente_id');
+  var infoCli    = document.getElementById('clienteInfo');
+  var infoNome   = document.getElementById('cliInfoNome');
+  var listaCli   = document.getElementById('listaClientes');
 
   function tentarVincularCliente() {
-    const val = inputNome.value.trim();
-    let achou = null;
-    listaCli.querySelectorAll('option').forEach(o => {
+    var val = inputNome.value.trim();
+    var achou = null;
+    listaCli.querySelectorAll('option').forEach(function (o) {
       if (o.dataset.nome === val) achou = o;
     });
     if (achou) {
@@ -654,6 +643,7 @@ require __DIR__ . '/header.php';
       infoCli.hidden = false;
       if (!inputCel.value.trim() && achou.dataset.celular) {
         inputCel.value = achou.dataset.celular;
+        inputCel.dispatchEvent(new Event('input'));
       }
     } else {
       hiddenCli.value = 0;
@@ -663,17 +653,17 @@ require __DIR__ . '/header.php';
   inputNome.addEventListener('input', tentarVincularCliente);
   inputNome.addEventListener('change', tentarVincularCliente);
 
-  /* ========== PLACA → APIBRASIL ========== */
-  const placa = document.getElementById('placa');
-  const placaStatus = document.getElementById('placaStatus');
-  const placaMsg = document.getElementById('placaMsg');
-  const vInfo = document.getElementById('veiculoInfo');
-  const manualBox = document.getElementById('manualBox');
-  const contMes = document.getElementById('contMes');
-  const contTotal = document.getElementById('contTotal');
-  let timerPlaca = null;
+  /* ========= PLACA ========= */
+  var placa = document.getElementById('placa');
+  var placaStatus = document.getElementById('placaStatus');
+  var placaMsg = document.getElementById('placaMsg');
+  var vInfo = document.getElementById('veiculoInfo');
+  var manualBox = document.getElementById('manualBox');
+  var contMes = document.getElementById('contMes');
+  var contTotal = document.getElementById('contTotal');
+  var timerPlaca = null;
 
-  placa.addEventListener('input', () => {
+  placa.addEventListener('input', function () {
     placa.value = placa.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
     clearTimeout(timerPlaca);
     if (placa.value.length === 7) {
@@ -684,56 +674,58 @@ require __DIR__ . '/header.php';
     }
   });
 
-  async function consultarPlaca() {
-    const p = placa.value;
+  function consultarPlaca() {
+    var p = placa.value;
     placaStatus.textContent = '...';
     placaStatus.className = 'absolute right-3 top-2.5 text-xs text-slate-400';
     placaMsg.textContent = 'Consultando APIBrasil...';
     vInfo.hidden = true;
-    try {
-      const r = await fetch('consultar_placa.php?placa=' + encodeURIComponent(p));
-      const d = await r.json();
-      if (d.contadores) {
-        contMes.textContent = d.contadores.mes;
-        contTotal.textContent = d.contadores.total;
-      }
-      if (d.ok) {
-        placaStatus.textContent = '✓';
-        placaStatus.className = 'absolute right-3 top-2.5 text-xs text-emerald-600';
-        placaMsg.textContent = d.cache ? 'Dados do cache local.' : 'Dados obtidos da APIBrasil.';
-        document.getElementById('vMarca').textContent  = d.dados.marca  || '—';
-        document.getElementById('vModelo').textContent = d.dados.modelo || '—';
-        document.getElementById('vAno').textContent    = (d.dados.ano_modelo || d.dados.ano_fabricacao || '—');
-        document.getElementById('vCor').textContent    = d.dados.cor    || '—';
-        vInfo.hidden = false;
-      } else {
+
+    fetch('consultar_placa.php?placa=' + encodeURIComponent(p))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.contadores) {
+          contMes.textContent = d.contadores.mes;
+          contTotal.textContent = d.contadores.total;
+        }
+        if (d.ok) {
+          placaStatus.textContent = '✓';
+          placaStatus.className = 'absolute right-3 top-2.5 text-xs text-emerald-600';
+          placaMsg.textContent = d.cache ? 'Dados do cache local.' : 'Dados obtidos da APIBrasil.';
+          document.getElementById('vMarca').textContent  = d.dados.marca  || '—';
+          document.getElementById('vModelo').textContent = d.dados.modelo || '—';
+          document.getElementById('vAno').textContent    = (d.dados.ano_modelo || d.dados.ano_fabricacao || '—');
+          document.getElementById('vCor').textContent    = d.dados.cor    || '—';
+          vInfo.hidden = false;
+        } else {
+          placaStatus.textContent = '!';
+          placaStatus.className = 'absolute right-3 top-2.5 text-xs text-amber-600';
+          placaMsg.textContent = d.erro || 'Não foi possível consultar.';
+          manualBox.open = true;
+        }
+      })
+      .catch(function () {
         placaStatus.textContent = '!';
         placaStatus.className = 'absolute right-3 top-2.5 text-xs text-amber-600';
-        placaMsg.textContent = d.erro || 'Não foi possível consultar.';
+        placaMsg.textContent = 'Falha de conexão.';
         manualBox.open = true;
-      }
-    } catch (e) {
-      placaStatus.textContent = '!';
-      placaStatus.className = 'absolute right-3 top-2.5 text-xs text-amber-600';
-      placaMsg.textContent = 'Falha de conexão.';
-      manualBox.open = true;
-    }
+      });
   }
 
-  /* Se já existe placa (modo edição), carrega contadores e info do cache */
-  if (placa.value.length === 7) {
-    consultarPlaca();
+  if (placa.value.length === 7) consultarPlaca();
+
+  /* ========= SERVIÇOS ========= */
+  var selServico = document.getElementById('selServico');
+  var btnAdd     = document.getElementById('btnAddServico');
+  var listaEl    = document.getElementById('listaServicos');
+  var listaVazia = document.getElementById('listaVazia');
+  var adicionados = {};
+
+  if (listaEl) {
+    listaEl.querySelectorAll('[data-id]').forEach(function (el) {
+      adicionados[el.dataset.id] = true;
+    });
   }
-
-  /* ========== SERVIÇOS ========== */
-  const selServico = document.getElementById('selServico');
-  const btnAdd     = document.getElementById('btnAddServico');
-  const listaEl    = document.getElementById('listaServicos');
-  const listaVazia = document.getElementById('listaVazia');
-  const adicionados = new Set();
-
-  // Popula o set com os itens já existentes (edição)
-  listaEl.querySelectorAll('[data-id]').forEach(el => adicionados.add(el.dataset.id));
 
   function atualizarEstadoVazio() {
     if (!listaVazia) return;
@@ -742,23 +734,41 @@ require __DIR__ . '/header.php';
 
   function adicionarServico() {
     if (!selServico || !selServico.value) return;
-    const id = selServico.value;
-    if (adicionados.has(id)) { alert('Esse serviço já foi adicionado.'); return; }
-    const opt   = selServico.options[selServico.selectedIndex];
-    const nome  = opt.dataset.nome;
-    const preco = parseInt(opt.dataset.preco, 10) || 0;
-    adicionados.add(id);
+    var id = selServico.value;
+    if (adicionados[id]) { alert('Esse serviço já foi adicionado.'); return; }
+    var opt   = selServico.options[selServico.selectedIndex];
+    var nome  = opt.dataset.nome;
+    var preco = parseInt(opt.dataset.preco, 10) || 0;
+    adicionados[id] = true;
 
-    const row = document.createElement('div');
+    var row = document.createElement('div');
     row.className = 'flex items-center gap-3 px-4 py-3';
     row.dataset.id    = id;
     row.dataset.preco = preco;
-    row.innerHTML = `
-      <input type="hidden" name="servicos[]" value="${id}">
-      <div class="flex-1 text-sm font-medium">${nome}</div>
-      <div class="text-sm font-semibold whitespace-nowrap">${brl(preco)}</div>
-      <button type="button" class="btn-remover text-rose-600 hover:underline text-xs">Remover</button>
-    `;
+
+    var h = document.createElement('input');
+    h.type = 'hidden';
+    h.name = 'servicos[]';
+    h.value = id;
+
+    var divNome = document.createElement('div');
+    divNome.className = 'flex-1 text-sm font-medium';
+    divNome.textContent = nome;
+
+    var divPreco = document.createElement('div');
+    divPreco.className = 'text-sm font-semibold whitespace-nowrap';
+    divPreco.textContent = brl(preco);
+
+    var btnRem = document.createElement('button');
+    btnRem.type = 'button';
+    btnRem.className = 'btn-remover text-rose-600 hover:underline text-xs';
+    btnRem.textContent = 'Remover';
+
+    row.appendChild(h);
+    row.appendChild(divNome);
+    row.appendChild(divPreco);
+    row.appendChild(btnRem);
+
     listaEl.appendChild(row);
     selServico.value = '';
     selServico.focus();
@@ -766,60 +776,79 @@ require __DIR__ . '/header.php';
     recalcular();
   }
 
-  btnAdd?.addEventListener('click', adicionarServico);
-  selServico?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); adicionarServico(); }
-  });
-  listaEl?.addEventListener('click', e => {
-    if (!e.target.classList.contains('btn-remover')) return;
-    const row = e.target.closest('[data-id]');
-    adicionados.delete(row.dataset.id);
-    row.remove();
-    atualizarEstadoVazio();
+  if (btnAdd) btnAdd.addEventListener('click', adicionarServico);
+  if (selServico) {
+    selServico.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); adicionarServico(); }
+    });
+  }
+
+  if (listaEl) {
+    listaEl.addEventListener('click', function (e) {
+      if (!e.target.classList.contains('btn-remover')) return;
+      var row = e.target.closest('[data-id]');
+      if (!row) return;
+      delete adicionados[row.dataset.id];
+      row.remove();
+      atualizarEstadoVazio();
+      recalcular();
+    });
+  }
+
+  /* ========= DESCONTO ========= */
+  var descInput = document.getElementById('desconto');
+  var tipoDesc  = document.getElementById('desconto_tipo');
+  var subtotalEl = document.getElementById('subtotal');
+  var descEl     = document.getElementById('descView');
+  var totalEl    = document.getElementById('totalView');
+
+  tipoDesc.addEventListener('change', function () {
+    descInput.value = (tipoDesc.value === 'percentual') ? '0' : '';
     recalcular();
   });
 
-  /* ========== DESCONTO ========== */
-  const descInput = document.getElementById('desconto');
-  const tipoDesc  = document.getElementById('desconto_tipo');
-  const subtotalEl = document.getElementById('subtotal');
-  const descEl     = document.getElementById('descView');
-  const totalEl    = document.getElementById('totalView');
+  descInput.addEventListener('focus', function () {
+    if (tipoDesc.value === 'valor' && (descInput.value === '0,00' || descInput.value === '0')) {
+      descInput.value = '';
+    }
+  });
 
-  function aplicarMascaraDesconto() {
+  descInput.addEventListener('input', function () {
     if (tipoDesc.value === 'percentual') {
       descInput.value = soDigitos(descInput.value).slice(0, 3);
     } else {
-      descInput.value = maskMoney(descInput.value);
-    }
-  }
-  aplicarMascaraDesconto();
-
-  descInput.addEventListener('input', () => { aplicarMascaraDesconto(); recalcular(); });
-  tipoDesc.addEventListener('change', () => {
-    if (tipoDesc.value === 'percentual') {
-      descInput.value = '0';
-    } else {
-      descInput.value = '0,00';
+      descInput.value = descInput.value.replace(/[^\d.,]/g, '');
     }
     recalcular();
   });
 
-  /* ========== TOTAIS ========== */
-  function recalcular() {
-    let sub = 0;
-    listaEl.querySelectorAll('[data-preco]').forEach(el => {
-      sub += parseInt(el.dataset.preco, 10) || 0;
-    });
-    let desc = 0;
+  descInput.addEventListener('blur', function () {
     if (tipoDesc.value === 'percentual') {
-      const p = Math.max(0, Math.min(100, parseInt(soDigitos(descInput.value), 10) || 0));
+      var p = Math.min(100, parseInt(soDigitos(descInput.value) || '0', 10));
+      descInput.value = String(p);
+    } else {
+      descInput.value = formatarMoedaBR(descInput.value);
+    }
+    recalcular();
+  });
+
+  /* ========= TOTAIS ========= */
+  function recalcular() {
+    var sub = 0;
+    if (listaEl) {
+      listaEl.querySelectorAll('[data-preco]').forEach(function (el) {
+        sub += parseInt(el.dataset.preco, 10) || 0;
+      });
+    }
+    var desc = 0;
+    if (tipoDesc.value === 'percentual') {
+      var p = Math.max(0, Math.min(100, parseInt(soDigitos(descInput.value), 10) || 0));
       desc = Math.round(sub * p / 100);
     } else {
       desc = parseInt(soDigitos(descInput.value), 10) || 0;
       if (desc > sub) desc = sub;
     }
-    const total = Math.max(0, sub - desc);
+    var total = Math.max(0, sub - desc);
     subtotalEl.textContent = brl(sub);
     descEl.textContent     = '- ' + brl(desc);
     totalEl.textContent    = brl(total);

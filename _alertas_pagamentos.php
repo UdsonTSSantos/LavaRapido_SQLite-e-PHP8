@@ -1,6 +1,13 @@
 <?php
 /* Alertas de pagamentos — incluir no dashboard principal */
 require_once __DIR__ . '/config.php';
+
+/* Bloqueio de acesso direto: só pode ser incluído */
+if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
+    header('Location: index.php');
+    exit;
+}
+
 ensure_pagamentos();
 
 $__mp = metricas_pagamentos();

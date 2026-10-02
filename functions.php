@@ -1144,3 +1144,120 @@ function buscar_pagamento(int $id): ?array {
     $st->execute([$id]);
     return $st->fetch() ?: null;
 }
+
+/* =========================================================
+ *  AUTENTICAÇÃO — camada de serviço
+ * ========================================================= */
+
+/* =========================================================
+ *  AUTENTICAÇÃO — camada de serviço
+ * ========================================================= */
+
+function autenticar(string $email, string $senha): array {
+    $email = trim($email);
+    if ($email === '' || $senha === '') {
+        return ['ok' => false, 'erro' => 'Informe usuário e senha.'];
+    }
+    if (defined('AUTH_MODE') && AUTH_MODE === 'api' && AUTH_API_URL !== '') {
+        return autenticar_via_api($email, $senha);
+    }
+    return autenticar_local($email, $senha);
+}
+
+function autenticar_local(string $email, string $senha): array {
+    ensure_usuarios();
+    $stmt = db()->prepare('SELECT * FROM usuarios WHERE email = ? LIMIT 1');
+    $stmt->execute([$email]);
+    $u = $stmt->fetch();
+
+    if (!$u)                                    return ['ok' => false, 'erro' => 'Credenciais inválidas.'];
+    if (!(int)$u['ativo'])                      return ['ok' => false, 'erro' => 'Usuário inativo. Procure o administrador.'];
+    if (!password_verify($senha, $u['senha_hash'])) return ['ok' => false, 'erro' => 'Credenciais inválidas.'];
+
+    return [
+        'ok' => true,
+        'usuario' => [
+            'id'                   => (int)$u['id'],
+            'email'                => (string)$u['email'],
+            'nome'                 => (string)($u['nome'] ?? ''),
+            'is_admin'             => (int)$u['is_admin'],
+            'precisa_trocar_senha' => (int)$u['precisa_trocar_senha'],
+        ],
+    ];
+}
+
+function autenticar_via_api(string $email, string $senha): array {
+    $url = rtrim(AUTH_API_URL, '/') . '/auth/login';
+    $payload = json_encode(['email' => $email, 'senha' => $senha], JSON_UNESCAPED_UNICODE);
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => AUTH_API_TIMEOUT ?? 8,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => $payload,
+        CURLOPT_HTTPHEADER     => [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'X-Api-Key: ' . AUTH_API_KEY,
+        ],
+    ]);
+    $body = curl_exec($ch);
+    $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
+    curl_close($ch);
+
+    if ($body === false) return ['ok' => false, 'erro' => 'Serviço de autenticação indisponível.'];
+    if ($http === 401)   return ['ok' => false, 'erro' => 'Credenciais inválidas.'];
+    if ($http >= 500)    return ['ok' => false, 'erro' => 'Serviço de autenticação indisponível.'];
+    if ($http !== 200)   return ['ok' => false, 'erro' => "Erro inesperado ({$http})."];
+
+    $json = json_decode($body, true);
+    if (!is_array($json) || empty($json['ok']) || empty($json['usuario'])) {
+        return ['ok' => false, 'erro' => $json['erro'] ?? 'Resposta inválida.'];
+    }
+
+    $u = $json['usuario'];
+    return [
+        'ok' => true,
+        'usuario' => [
+            'id'                   => (int)($u['id'] ?? 0),
+            'email'                => (string)($u['email'] ?? $email),
+            'nome'                 => (string)($u['nome'] ?? ''),
+            'is_admin'             => (int)($u['is_admin'] ?? 0),
+            'precisa_trocar_senha' => (int)($u['precisa_trocar'] ?? 0),
+        ],
+        'token' => $json['token'] ?? '',
+    ];
+}
+
+function sincronizar_usuario_local(array $u): array {
+    if (empty($u['email'])) return $u;
+    $st = db()->prepare('SELECT id FROM usuarios WHERE email = ?');
+    $st->execute([$u['email']]);
+    $existente = $st->fetchColumn();
+
+    if ($existente) {
+        db()->prepare("UPDATE usuarios SET nome=?, is_admin=?, precisa_trocar_senha=?, ativo=1 WHERE id=?")
+           ->execute([$u['nome'] ?? '', $u['is_admin'] ?? 0, $u['precisa_trocar_senha'] ?? 0, $existente]);
+        $u['id'] = (int)$existente;
+        return $u;
+    }
+
+    db()->prepare("INSERT INTO usuarios (email, senha_hash, is_admin, precisa_trocar_senha, ativo, nome, cpf, celular)
+                   VALUES (?, ?, ?, ?, 1, ?, '', '')")
+       ->execute([
+           $u['email'],
+           password_hash(bin2hex(random_bytes(32)), PASSWORD_DEFAULT),
+           $u['is_admin'] ?? 0,
+           $u['precisa_trocar_senha'] ?? 0,
+           $u['nome'] ?? '',
+       ]);
+    $u['id'] = (int)db()->lastInsertId();
+    return $u;
+}
+
+
+
+
+

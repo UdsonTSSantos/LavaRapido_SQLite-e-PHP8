@@ -138,24 +138,65 @@ require __DIR__ . '/header.php';
 ?>
 
 <script>
-(function () {
-  const soDigitos = v => (v || '').replace(/\D+/g, '');
-  const maskMoney = v => {
-    v = soDigitos(v);
-    if (v === '') return '';
-    v = v.padStart(3, '0');
-    const int = v.slice(0, -2), dec = v.slice(-2);
-    return int.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + dec;
-  };
-  document.addEventListener('DOMContentLoaded', () => {
-    const el = document.querySelector('[data-mask="money"]');
-    if (!el) return;
-    const exec = () => { el.value = maskMoney(el.value); };
-    el.addEventListener('input', exec);
-    el.addEventListener('blur',  exec);
-    exec();
+
+/* ===== MÁSCARA DE MOEDA INTELIGENTE =====
+   - Durante a digitação: aceita apenas números, vírgula e ponto
+   - Ao sair do campo (blur): formata para 1.234,56
+   - "200"       vira "200,00"
+   - "200,50"    vira "200,50"
+   - "1500,50"   vira "1.500,50"
+   - "1.500,50"  vira "1.500,50"
+============================================ */
+function formatarMoedaBR(v) {
+  v = String(v || '').trim();
+  if (v === '') return '';
+
+  // Tem vírgula? Trata como decimal brasileiro
+  if (v.includes(',')) {
+    let [int, dec] = v.split(',');
+    int = int.replace(/\D/g, '') || '0';
+    dec = (dec.replace(/\D/g, '') + '00').slice(0, 2);
+    int = int.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return int + ',' + dec;
+  }
+
+  // Sem vírgula: só dígitos (e opcionalmente pontos de milhar)
+  const dig = v.replace(/\D/g, '');
+  if (dig === '') return '';
+  return dig.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',00';
+}
+
+document.querySelectorAll('[data-mask="money"]').forEach(el => {
+  // Ao digitar: permite apenas dígitos, vírgula e ponto
+  el.addEventListener('input', function () {
+    const pos = this.selectionStart;
+    const antes = this.value.length;
+    this.value = this.value.replace(/[^\d.,]/g, '');
+    // Reposiciona o cursor se algum caractere foi removido
+    if (this.value.length !== antes) {
+      this.setSelectionRange(Math.max(0, pos - 1), Math.max(0, pos - 1));
+    }
   });
-})();
+
+  // Ao focar: se estiver "0,00", limpa para digitar do zero
+  el.addEventListener('focus', function () {
+    if (this.value === '0,00' || this.value === '0.00') this.value = '';
+  });
+
+  // Ao perder o foco: aplica a formatação final
+  el.addEventListener('blur', function () {
+    this.value = formatarMoedaBR(this.value);
+  });
+});
+
+
+
+
+
+
+
+
+
 </script>
 
 <div class="max-w-3xl mx-auto">

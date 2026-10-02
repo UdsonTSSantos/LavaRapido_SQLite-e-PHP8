@@ -1,4 +1,15 @@
 <?php
+
+
+/* =========================================================
+ *  GUARDA GLOBAL: se o header está sendo renderizado,
+ *  o usuário PRECISA estar logado.
+ * ========================================================= */
+if (empty($_SESSION['usuario_id']) && basename($_SERVER['PHP_SELF'] ?? '') !== 'index.php') {
+    header('Location: index.php');
+    exit;
+}
+
 /** @var string $titulo */
 $titulo = $titulo ?? 'Sistema';
 $u      = usuario_logado();
