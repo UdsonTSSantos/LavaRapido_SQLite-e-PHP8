@@ -229,6 +229,7 @@ tbody > tr:nth-child(odd):hover {
             'pagamento_form.php', 'dashboard_pagamentos.php',
             'relatorio_pagamentos.php', 'categorias_pagamento.php',
          ], $atual) ?>">Pagamentos</a>
+      <a href="administrativo.php" class="<?= menu_cls('administrativo.php', [], $atual) ?>">Administrativo</a>
       <a href="dashboard_operacional.php" class="<?= menu_cls('dashboard_operacional.php', [], $atual) ?>">Dashboard</a>   
 
       <?php if ($u['is_admin']): ?>

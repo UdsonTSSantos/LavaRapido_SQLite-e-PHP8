@@ -95,6 +95,13 @@ $saudacao = $hora < 12 ? 'Bom dia' : ($hora < 18 ? 'Boa tarde' : 'Boa noite');
       'icon'  => '💸',
       'bg'    => 'linear-gradient(135deg,#0cb7f2,#b6ffff)',
     ],
+    [
+      'href'  => 'administrativo.php',
+      'titulo'=> 'Administrativo',
+      'desc'  => 'Receitas x despesas pagas + impressão.',
+      'icon'  => '📒',
+      'bg'    => 'linear-gradient(135deg,#004173,#0979b0)',
+],
   ];
 
   foreach ($cards as $c): ?>
