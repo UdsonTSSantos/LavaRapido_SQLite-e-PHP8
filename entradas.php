@@ -69,7 +69,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'pagar')
 
             $pdo->commit();
 
-            /* ---------- Decide se abre o recibo ou volta para a lista ---------- */
             if ($gerarRecibo) {
                 flash('Pagamento registrado. Recibo: ' . $recibo, 'sucesso');
                 header('Location: recibo.php?entrada=' . $entrada_id . '&recibo=' . urlencode($recibo));
@@ -95,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'pagar')
 }
 
 /* =========================================================
- *  POST: alterar status (aberta / concluida / entregue)
+ *  POST: alterar status
  * ========================================================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'status') {
     csrf_validar();
@@ -131,11 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'status'
                     ")->execute([$id]);
                     flash('Status atualizado. SMS enviado para ' . $entrada['cliente_celular'] . '.', 'sucesso');
                 } else {
-                    flash(
-                        'Status atualizado, mas houve falha no SMS: '
-                        . ($r['erro'] ?? 'erro desconhecido'),
-                        'erro'
-                    );
+                    flash('Status atualizado, mas houve falha no SMS: ' . ($r['erro'] ?? 'erro desconhecido'), 'erro');
                 }
             } else {
                 flash('Status atualizado.', 'sucesso');
@@ -149,64 +144,161 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'status'
 }
 
 /* =========================================================
- *  Busca / filtros
+ *  FILTROS + PAGINAÇÃO
  * ========================================================= */
 $busca  = trim((string)($_GET['q'] ?? ''));
 $status = trim((string)($_GET['status'] ?? ''));
 
+/* Padrão: últimos 12 meses */
+$de  = trim((string)($_GET['de']  ?? date('Y-m-d', strtotime('-12 months'))));
+$ate = trim((string)($_GET['ate'] ?? date('Y-m-d')));
+
+$pagina = max(1, (int)($_GET['pagina'] ?? 1));
+$porPagina = 20;
+
+/* Valida datas */
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $de))  $de  = date('Y-m-d', strtotime('-12 months'));
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $ate)) $ate = date('Y-m-d');
+
+/* ---------- WHERE ---------- */
 $where  = [];
 $params = [];
 
+$where[] = 'e.data_entrada >= :de';
+$params[':de'] = $de;
+
+$where[] = 'e.data_entrada <= :ate';
+$params[':ate'] = $ate;
+
 if ($busca !== '') {
-    $where[] = "(e.placa LIKE :q OR c.nome LIKE :q OR e.cliente_nome_avulso LIKE :q OR e.veiculo_manual_modelo LIKE :q)";
+    $where[] = "(e.placa LIKE :q OR c.nome LIKE :q OR e.cliente_nome_avulso LIKE :q
+                 OR e.veiculo_manual_modelo LIKE :q)";
     $params[':q'] = '%' . $busca . '%';
 }
 if (in_array($status, ['aberta', 'concluida', 'entregue'], true)) {
     $where[] = 'e.status = :st';
     $params[':st'] = $status;
 }
-$sqlWhere = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
+$sqlWhere = 'WHERE ' . implode(' AND ', $where);
+
+/* ---------- Conta o total ---------- */
+$stCount = db()->prepare("
+    SELECT COUNT(*)
+    FROM lavagem_entradas e
+    LEFT JOIN clientes c ON c.id = e.cliente_id
+    $sqlWhere
+");
+$stCount->execute($params);
+$totalRegistros = (int)$stCount->fetchColumn();
+
+$totalPaginas = max(1, (int)ceil($totalRegistros / $porPagina));
+if ($pagina > $totalPaginas) $pagina = $totalPaginas;
+$offset = ($pagina - 1) * $porPagina;
+
+/* ---------- Busca a página ---------- */
 $sql = "SELECT e.*, c.nome AS cliente_nome_cadastro
         FROM lavagem_entradas e
         LEFT JOIN clientes c ON c.id = e.cliente_id
         $sqlWhere
         ORDER BY e.data_entrada DESC, e.hora_entrada DESC, e.id DESC
-        LIMIT 500";
+        LIMIT $porPagina OFFSET $offset";
 
 $st = db()->prepare($sql);
 $st->execute($params);
 $entradas = $st->fetchAll();
+
+/* ---------- Soma de valores da página ---------- */
+$totalPagina = 0;
+foreach ($entradas as $en) $totalPagina += (int)$en['total_centavos'];
+
+/* ---------- Helper para montar URLs preservando filtros ---------- */
+function urlPagina(int $pagina, array $filtros): string {
+    $q = array_filter($filtros, fn($v) => $v !== '' && $v !== null);
+    $q['pagina'] = $pagina;
+    return 'entradas.php?' . http_build_query($q);
+}
+
+$filtrosAtuais = [
+    'q'      => $busca,
+    'status' => $status,
+    'de'     => $de,
+    'ate'    => $ate,
+];
 
 $titulo = 'Entradas de lavagem';
 require __DIR__ . '/header.php';
 ?>
 
 <div class="bg-white rounded-2xl shadow-card border border-slate-200 overflow-hidden">
+
+  <!-- ============ CABEÇALHO ============ -->
   <div class="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
     <div>
       <h1 class="text-xl font-bold text-slate-900">Entradas de lavagem</h1>
-      <p class="text-xs text-slate-500 mt-0.5"><?= count($entradas) ?> registro(s)</p>
+      <p class="text-xs text-slate-500 mt-0.5">
+        <?= (int)$totalRegistros ?> registro(s) no período
+        <?= $totalPaginas > 1 ? ' · página ' . $pagina . ' de ' . $totalPaginas : '' ?>
+      </p>
     </div>
     <div class="flex items-center gap-2 flex-wrap">
-      <form method="get" class="flex flex-wrap gap-2">
-        <input type="text" name="q" value="<?= e($busca) ?>" placeholder="Buscar por placa ou cliente"
-               class="w-56 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-brand-400">
-        <select name="status" class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">
-          <option value="">Todos os status</option>
-          <option value="aberta"    <?= $status === 'aberta'    ? 'selected' : '' ?>>Aberta</option>
-          <option value="concluida" <?= $status === 'concluida' ? 'selected' : '' ?>>Concluída</option>
-          <option value="entregue"  <?= $status === 'entregue'  ? 'selected' : '' ?>>Entregue</option>
-        </select>
-        <button class="rounded-lg bg-slate-800 hover:bg-slate-700 text-white px-4 text-sm font-semibold">Filtrar</button>
-      </form>
       <a href="entrada_lavagem.php"
-         class="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 text-sm font-semibold whitespace-nowrap shadow-sm">
+         class="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 text-sm font-semibold
+                whitespace-nowrap shadow-sm">
         + Nova entrada
       </a>
     </div>
   </div>
 
+  <!-- ============ FILTROS ============ -->
+  <form method="get" class="px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-2 items-end">
+    <div class="flex-1 min-w-[200px]">
+      <label class="block text-xs font-bold text-slate-500 mb-1">Buscar</label>
+      <input type="text" name="q" value="<?= e($busca) ?>" placeholder="Placa, cliente ou modelo"
+             class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold
+                    focus:outline-none focus:ring-2 focus:ring-brand-400">
+    </div>
+
+    <div>
+      <label class="block text-xs font-bold text-slate-500 mb-1">Status</label>
+      <select name="status"
+              class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold
+                     focus:outline-none focus:ring-2 focus:ring-brand-400">
+        <option value="">Todos</option>
+        <option value="aberta"    <?= $status === 'aberta'    ? 'selected' : '' ?>>Aberta</option>
+        <option value="concluida" <?= $status === 'concluida' ? 'selected' : '' ?>>Concluída</option>
+        <option value="entregue"  <?= $status === 'entregue'  ? 'selected' : '' ?>>Entregue</option>
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs font-bold text-slate-500 mb-1">De</label>
+      <input type="date" name="de" value="<?= e($de) ?>"
+             class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold
+                    focus:outline-none focus:ring-2 focus:ring-brand-400">
+    </div>
+
+    <div>
+      <label class="block text-xs font-bold text-slate-500 mb-1">Até</label>
+      <input type="date" name="ate" value="<?= e($ate) ?>"
+             class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold
+                    focus:outline-none focus:ring-2 focus:ring-brand-400">
+    </div>
+
+    <button class="rounded-lg bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 text-sm font-semibold">
+      Filtrar
+    </button>
+    <a href="entradas.php" class="text-sm text-slate-500 hover:underline py-2 px-2 font-medium">
+      Limpar
+    </a>
+
+    <div class="ml-auto text-right">
+      <div class="text-xs text-slate-500">Total desta página</div>
+      <div class="font-bold text-emerald-700"><?= e(centavos_para_moeda_brl($totalPagina)) ?></div>
+    </div>
+  </form>
+
+  <!-- ============ TABELA ============ -->
   <div class="overflow-x-auto">
     <table class="min-w-full text-sm">
       <thead class="bg-slate-50 text-slate-600">
@@ -222,7 +314,7 @@ require __DIR__ . '/header.php';
       <tbody class="divide-y divide-slate-100">
       <?php if (!$entradas): ?>
         <tr><td colspan="6" class="px-4 py-10 text-center text-slate-400">
-          Nenhuma entrada registrada.
+          Nenhuma entrada encontrada no período selecionado.
         </td></tr>
       <?php else: ?>
         <?php foreach ($entradas as $en): ?>
@@ -301,6 +393,9 @@ require __DIR__ . '/header.php';
                 </form>
               <?php endif; ?>
 
+              <a href="cupom_lavagem.php?entrada=<?= (int)$en['id'] ?>" target="_blank"
+                 class="text-slate-700 hover:underline text-xs font-semibold mr-2">Cupom</a>
+
               <?php if (!$en['pago']): ?>
                 <button type="button"
                         class="btn-pagar text-emerald-700 hover:underline text-xs font-semibold mr-2"
@@ -321,6 +416,100 @@ require __DIR__ . '/header.php';
       </tbody>
     </table>
   </div>
+
+  <!-- ============ PAGINAÇÃO ============ -->
+  <?php if ($totalPaginas > 1): ?>
+    <?php
+      /* Monta janela de páginas: sempre 1 ... n-1 n n+1 ... última */
+      $paginas = [];
+      $paginas[] = 1;
+      for ($i = max(2, $pagina - 2); $i <= min($totalPaginas - 1, $pagina + 2); $i++) {
+          $paginas[] = $i;
+      }
+      if ($totalPaginas > 1) $paginas[] = $totalPaginas;
+      $paginas = array_values(array_unique($paginas));
+      sort($paginas);
+    ?>
+    <div class="px-5 py-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50">
+
+      <div class="text-xs text-slate-500">
+        Mostrando
+        <strong><?= $offset + 1 ?></strong>
+        a
+        <strong><?= min($offset + $porPagina, $totalRegistros) ?></strong>
+        de
+        <strong><?= $totalRegistros ?></strong>
+        registro(s)
+      </div>
+
+      <nav class="flex items-center gap-1 flex-wrap">
+        <?php if ($pagina > 1): ?>
+          <a href="<?= e(urlPagina(1, $filtrosAtuais)) ?>"
+             class="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700">
+            « Primeira
+          </a>
+          <a href="<?= e(urlPagina($pagina - 1, $filtrosAtuais)) ?>"
+             class="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700">
+            ‹ Anterior
+          </a>
+        <?php else: ?>
+          <span class="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-300 cursor-not-allowed">« Primeira</span>
+          <span class="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-300 cursor-not-allowed">‹ Anterior</span>
+        <?php endif; ?>
+
+        <?php
+          $anterior = null;
+          foreach ($paginas as $p):
+            if ($anterior !== null && $p - $anterior > 1):
+        ?>
+          <span class="px-2 text-slate-400">…</span>
+        <?php
+            endif;
+            $anterior = $p;
+            if ($p === $pagina):
+        ?>
+          <span class="px-3 py-1.5 rounded-lg bg-brand-500 text-white text-xs font-bold shadow-sm">
+            <?= $p ?>
+          </span>
+        <?php else: ?>
+          <a href="<?= e(urlPagina($p, $filtrosAtuais)) ?>"
+             class="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700">
+            <?= $p ?>
+          </a>
+        <?php
+            endif;
+          endforeach;
+        ?>
+
+        <?php if ($pagina < $totalPaginas): ?>
+          <a href="<?= e(urlPagina($pagina + 1, $filtrosAtuais)) ?>"
+             class="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700">
+            Próxima ›
+          </a>
+          <a href="<?= e(urlPagina($totalPaginas, $filtrosAtuais)) ?>"
+             class="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700">
+            Última »
+          </a>
+        <?php else: ?>
+          <span class="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-300 cursor-not-allowed">Próxima ›</span>
+          <span class="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-300 cursor-not-allowed">Última »</span>
+        <?php endif; ?>
+      </nav>
+
+      <form method="get" class="flex items-center gap-2 text-xs">
+        <?php foreach ($filtrosAtuais as $k => $v): if ($v !== ''): ?>
+          <input type="hidden" name="<?= e($k) ?>" value="<?= e($v) ?>">
+        <?php endif; endforeach; ?>
+        <label class="text-slate-500 font-medium">Ir para</label>
+        <input type="number" name="pagina" min="1" max="<?= $totalPaginas ?>"
+               value="<?= $pagina ?>"
+               class="w-16 rounded-lg border border-slate-300 px-2 py-1 text-center font-bold text-black">
+        <button class="rounded-lg bg-slate-800 hover:bg-slate-700 text-white px-3 py-1 text-xs font-bold">Ir</button>
+      </form>
+
+    </div>
+  <?php endif; ?>
+
 </div>
 
 <!-- ============ MODAL DE PAGAMENTO ============ -->
@@ -347,14 +536,13 @@ require __DIR__ . '/header.php';
         <div class="grid gap-3 sm:grid-cols-2">
           <div>
             <label class="block text-sm font-bold text-slate-700 mb-1.5">Data do pagamento *</label>
-            <input type="date" name="data_pagamento" required
-                   value="<?= date('Y-m-d') ?>"
-                   class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black focus:outline-none focus:ring-2 focus:ring-brand-400">
+            <input type="date" name="data_pagamento" required value="<?= date('Y-m-d') ?>"
+                   class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black">
           </div>
           <div>
             <label class="block text-sm font-bold text-slate-700 mb-1.5">Valor pago (R$) *</label>
             <input name="valor" id="pgValor" required inputmode="numeric"
-                   class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black focus:outline-none focus:ring-2 focus:ring-brand-400">
+                   class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black">
           </div>
         </div>
 
@@ -377,7 +565,7 @@ require __DIR__ . '/header.php';
         <div>
           <label class="block text-sm font-bold text-slate-700 mb-1.5">Observação</label>
           <input name="observacao" maxlength="200"
-                 class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black focus:outline-none focus:ring-2 focus:ring-brand-400">
+                 class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black">
         </div>
       </div>
 

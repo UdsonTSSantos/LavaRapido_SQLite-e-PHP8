@@ -22,6 +22,7 @@ $__nome = $__emp['nome_fantasia'] ?? '';
 if ($__nome === '') $__nome = $__emp['razao_social'] ?? '';
 if ($__nome === '') $__nome = 'Sistema';
 
+/* Nome do usuário logado + item de menu ativo */
 $nomeTopo = '';
 $atual    = basename($_SERVER['PHP_SELF'] ?? '');
 
@@ -32,9 +33,10 @@ if ($u) {
         $st->execute([(int)$_SESSION['usuario_id']]);
         $n = $st->fetchColumn();
         if ($n) $nomeTopo = $n;
-    } catch (Throwable $e) { }
+    } catch (Throwable $e) { /* ignora */ }
 }
 
+/** Helper: classe do link de menu conforme página atual */
 function menu_cls(string $href, array $arquivos, string $atual): string {
     $ativo = ($atual === $href) || in_array($atual, $arquivos, true);
     return $ativo
@@ -56,7 +58,7 @@ function menu_cls(string $href, array $arquivos, string $atual): string {
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 /* =========================================================
- *  PALETA DO SISTEMA (definida em um único lugar)
+ *  PALETA DO SISTEMA
  * ========================================================= */
 tailwind.config = {
   theme: {
@@ -106,7 +108,6 @@ tailwind.config = {
 
   /* =========================================================
    *  CAMPOS DE FORMULÁRIO — padrão global do sistema
-   *  Fonte maior, mais pesada e preta
    * ========================================================= */
   input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="hidden"]),
   select,
@@ -166,7 +167,7 @@ tailwind.config = {
     color: #0f172a;
   }
 
-  /* Botões primários (classe utilitária global) */
+  /* Botões primários */
   .btn-primary {
     background-color: var(--brand-500);
     color: #fff;
@@ -185,25 +186,12 @@ tailwind.config = {
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
   ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
-  /* Animação sutil de entrada */
+  /* Animação sutil */
   @keyframes fadeUp {
     from { opacity: 0; transform: translateY(4px); }
     to   { opacity: 1; transform: translateY(0); }
   }
   .fade-up { animation: fadeUp .25s ease-out; }
-
-  /* =========================================================
- *  ZEBRA STRIPING — linhas alternadas nas tabelas
- * ========================================================= */
-tbody > tr:nth-child(even) {
-  background-color: rgba(240, 251, 255, 0.6);   /* brand-50 com transparência */
-}
-tbody > tr:nth-child(even):hover {
-  background-color: rgba(182, 255, 255, 0.35);  /* brand-100 no hover */
-}
-tbody > tr:nth-child(odd):hover {
-  background-color: #f8fafc;                    /* slate-50 no hover (linhas ímpares) */
-}
 </style>
 </head>
 <body class="h-full bg-slate-50 text-slate-800 antialiased">
@@ -212,6 +200,8 @@ tbody > tr:nth-child(odd):hover {
 <nav class="sticky top-0 z-40 text-white shadow-lg"
      style="background: linear-gradient(135deg, #004173 0%, #0979b0 100%);">
   <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+    
+    <!-- Logo e Nome da Empresa -->
     <a href="dashboard.php" class="flex items-center gap-3 font-bold tracking-tight text-lg">
       <?php if ($__logo): ?>
         <img src="<?= e($__logo) ?>" alt="Logo"
@@ -220,26 +210,50 @@ tbody > tr:nth-child(odd):hover {
       <span><?= e($__nome) ?></span>
     </a>
 
+    <!-- Menu de Navegação -->
     <div class="flex items-center gap-1 text-sm flex-wrap">
-      <a href="clientes.php"     class="<?= menu_cls('clientes.php',     ['cliente_form.php'], $atual) ?>">Clientes</a>
-      <a href="lavagens.php"     class="<?= menu_cls('lavagens.php',     ['lavagem_form.php'], $atual) ?>">Lavagens</a>
-      <a href="entradas.php"     class="<?= menu_cls('entradas.php',     ['entrada_lavagem.php'], $atual) ?>">Entradas</a>
-      <a href="fornecedores.php" class="<?= menu_cls('fornecedores.php', ['fornecedor_form.php'], $atual) ?>">Fornecedores</a>
-      <a href="pagamentos.php"   class="<?= menu_cls('pagamentos.php',   [
-            'pagamento_form.php', 'dashboard_pagamentos.php',
-            'relatorio_pagamentos.php', 'categorias_pagamento.php',
-         ], $atual) ?>">Pagamentos</a>
-      <a href="administrativo.php" class="<?= menu_cls('administrativo.php', [], $atual) ?>">Administrativo</a>
-      <a href="dashboard_operacional.php" class="<?= menu_cls('dashboard_operacional.php', [], $atual) ?>">Dashboard</a>   
+      
+      <!-- Dashboard (sempre visível) -->
+      <a href="dashboard.php" class="<?= menu_cls('dashboard.php', ['dashboard_operacional.php'], $atual) ?>">Dashboard</a>
 
+      <!-- Módulos operacionais -->
+      <?php if (function_exists('tem_permissao') && tem_permissao('clientes')): ?>
+        <a href="clientes.php" class="<?= menu_cls('clientes.php', ['cliente_form.php', 'cliente_historico.php'], $atual) ?>">Clientes</a>
+      <?php endif; ?>
+
+      <?php if (function_exists('tem_permissao') && tem_permissao('lavagens')): ?>
+        <a href="lavagens.php" class="<?= menu_cls('lavagens.php', ['lavagem_form.php'], $atual) ?>">Lavagens</a>
+      <?php endif; ?>
+
+      <?php if (function_exists('tem_permissao') && tem_permissao('entradas')): ?>
+        <a href="entradas.php" class="<?= menu_cls('entradas.php', ['entrada_lavagem.php', 'cupom_lavagem.php', 'recibo.php'], $atual) ?>">Entradas</a>
+      <?php endif; ?>
+
+      <?php if (function_exists('tem_permissao') && tem_permissao('fornecedores')): ?>
+        <a href="fornecedores.php" class="<?= menu_cls('fornecedores.php', ['fornecedor_form.php'], $atual) ?>">Fornecedores</a>
+      <?php endif; ?>
+
+      <?php if (function_exists('tem_permissao') && tem_permissao('pagamentos')): ?>
+        <a href="pagamentos.php" class="<?= menu_cls('pagamentos.php', [
+              'pagamento_form.php', 'dashboard_pagamentos.php',
+              'relatorio_pagamentos.php', 'categorias_pagamento.php',
+           ], $atual) ?>">Pagamentos</a>
+      <?php endif; ?>
+
+      <?php if (function_exists('tem_permissao') && tem_permissao('administrativo')): ?>
+        <a href="administrativo.php" class="<?= menu_cls('administrativo.php', [], $atual) ?>">Administrativo</a>
+      <?php endif; ?>
+
+      <!-- Área exclusiva do Administrador -->
       <?php if ($u['is_admin']): ?>
         <span class="mx-1.5 h-5 w-px bg-white/25 hidden md:inline-block"></span>
         <a href="usuarios.php" class="<?= menu_cls('usuarios.php', ['usuario_form.php','usuario_senha_gerada.php'], $atual) ?>">Usuários</a>
         <a href="empresa.php"  class="<?= menu_cls('empresa.php',  [], $atual) ?>">Empresa</a>
       <?php endif; ?>
 
+      <!-- Sessão -->
       <span class="mx-1.5 h-5 w-px bg-white/25 hidden md:inline-block"></span>
-      <span class="hidden md:inline text-white/90 font-medium">
+      <span class="hidden md:inline text-white/90 font-medium pr-2">
         <?= e($nomeTopo) ?><?= $u['is_admin'] ? ' · admin' : '' ?>
       </span>
       <a href="trocar_senha.php" class="px-3.5 py-2 rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition font-medium">Trocar senha</a>

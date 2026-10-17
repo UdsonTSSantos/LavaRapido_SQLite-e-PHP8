@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config.php';
 $admin = exigir_admin();
+ensure_permissoes_coluna();
 ensure_usuarios();
 
 /* ---------- Excluir ---------- */
@@ -115,6 +116,7 @@ require __DIR__ . '/header.php';
           <th class="text-left px-4 py-2">Celular</th>
           <th class="text-left px-4 py-2">Perfil</th>
           <th class="text-left px-4 py-2">Status</th>
+          <th class="text-left px-4 py-2.5 font-bold">Permissões</th>
           <th class="px-4 py-2"></th>
         </tr>
       </thead>

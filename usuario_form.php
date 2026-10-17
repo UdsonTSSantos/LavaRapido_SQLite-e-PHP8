@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config.php';
 $admin = exigir_admin();
+ensure_permissoes_coluna();
 ensure_usuarios();
 
 $id      = (int)($_GET['id'] ?? 0);
@@ -23,6 +24,11 @@ $dados = $usuario ?? [
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $permissoesSelecionadas = array_map('strval', (array)($_POST['permissoes'] ?? []));
+    $permissoesJSON = json_encode(
+      array_values(array_intersect($permissoesSelecionadas, array_keys(modulos_sistema()))),
+      JSON_UNESCAPED_UNICODE
+    );
     csrf_validar();
 
     $dados = [
@@ -55,13 +61,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     nome = :nome,
                     email = :email,
                     cpf = :cpf,
-                    celular = :celular
+                    celular = :celular,
+                    permissoes = :permissoes
                 WHERE id = :id
             ")->execute([
                 ':nome'    => $dados['nome'],
                 ':email'   => $dados['email'],
                 ':cpf'     => $dados['cpf'],
                 ':celular' => $dados['celular'],
+                ':permissoes' => $permissoesJSON,
                 ':id'      => $id,
             ]);
 
@@ -83,6 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $dados['nome'],
                 $dados['cpf'],
                 $dados['celular'],
+                $permissoesJSON,
             ]);
             $novoId = (int)db()->lastInsertId();
 
@@ -206,6 +215,58 @@ require __DIR__ . '/header.php';
                class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
         <p class="mt-1 text-xs text-slate-500">Usado para o envio da senha por WhatsApp.</p>
       </div>
+
+
+
+        <?php if (!$editar || (int)$dados['is_admin'] === 0): ?>
+      <!-- ============ PERMISSÕES DE ACESSO ============ -->
+      <section class="pt-4 border-t border-slate-200">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 class="text-sm font-bold text-slate-700 uppercase tracking-wider">
+              Permissões de acesso
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">
+              Marque os módulos que este usuário poderá acessar.
+            </p>
+          </div>
+          <div class="flex gap-2 text-xs">
+            <button type="button" id="btnMarcarTodos"
+                    class="px-3 py-1 rounded-md bg-slate-100 hover:bg-slate-200 font-semibold text-slate-700">
+              Marcar todos
+            </button>
+            <button type="button" id="btnDesmarcarTodos"
+                    class="px-3 py-1 rounded-md bg-slate-100 hover:bg-slate-200 font-semibold text-slate-700">
+              Limpar
+            </button>
+          </div>
+        </div>
+
+        <?php
+          $__permissoesAtuais = $editar ? permissoes_usuario((int)$dados['id']) : [];
+          if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+              $__permissoesAtuais = array_map('strval', (array)($_POST['permissoes'] ?? []));
+          }
+        ?>
+
+        <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <?php foreach (modulos_sistema() as $chave => $rotulo): ?>
+            <label class="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2.5
+                          hover:border-brand-400 hover:bg-brand-50 cursor-pointer transition">
+              <input type="checkbox" name="permissoes[]" value="<?= e($chave) ?>"
+                     class="chk-permissao w-4 h-4 rounded border-slate-300 text-brand-500 focus:ring-brand-400"
+                     <?= in_array($chave, $__permissoesAtuais, true) ? 'checked' : '' ?>>
+              <span class="text-sm font-semibold text-slate-700"><?= e($rotulo) ?></span>
+            </label>
+          <?php endforeach; ?>
+        </div>
+
+        <p class="mt-3 text-xs text-slate-500">
+          O <strong>Dashboard</strong> é sempre o destino após o login. Se o usuário não tiver
+          acesso a nenhum módulo, o dashboard mostra apenas a mensagem de boas-vindas.
+        </p>
+      </section>
+    <?php endif; ?>   
     </section>
 
     <div class="flex justify-end gap-2 pt-2">
@@ -217,5 +278,24 @@ require __DIR__ . '/header.php';
     </div>
   </form>
 </div>
+
+<script>
+(function () {
+  var btns = {
+    marcar:   document.getElementById('btnMarcarTodos'),
+    limpar:   document.getElementById('btnDesmarcarTodos'),
+  };
+  if (btns.marcar) {
+    btns.marcar.addEventListener('click', function () {
+      document.querySelectorAll('.chk-permissao').forEach(function (c) { c.checked = true; });
+    });
+  }
+  if (btns.limpar) {
+    btns.limpar.addEventListener('click', function () {
+      document.querySelectorAll('.chk-permissao').forEach(function (c) { c.checked = false; });
+    });
+  }
+})();
+</script>
 
 <?php require __DIR__ . '/footer.php'; ?>

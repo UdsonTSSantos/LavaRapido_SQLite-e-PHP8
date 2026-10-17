@@ -1257,6 +1257,173 @@ function sincronizar_usuario_local(array $u): array {
     return $u;
 }
 
+/* =========================================================
+ *  MULTI-VEÍCULO POR COMANDA
+ *  Cria a tabela lavagem_veiculos e migra dados existentes.
+ * ========================================================= */
+function ensure_lavagem_veiculos(): void {
+    static $ok = false;
+    if ($ok) return;
+
+    $pdo = db();
+    ensure_entradas();
+
+    /* ---------- Tabela de veículos por entrada ---------- */
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS lavagem_veiculos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entrada_id INTEGER NOT NULL,
+            ordem INTEGER NOT NULL DEFAULT 1,
+            placa TEXT NOT NULL DEFAULT '',
+            veiculo_id INTEGER,
+            manual_marca TEXT NOT NULL DEFAULT '',
+            manual_modelo TEXT NOT NULL DEFAULT '',
+            manual_cor TEXT NOT NULL DEFAULT '',
+            manual_ano TEXT NOT NULL DEFAULT '',
+            criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    ");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lv_entrada ON lavagem_veiculos(entrada_id)");
+
+    /* ---------- Coluna veiculo_id em lavagem_itens ---------- */
+    $cols = $pdo->query("PRAGMA table_info(lavagem_itens)")->fetchAll(PDO::FETCH_COLUMN, 1);
+    if (!in_array('veiculo_id', $cols, true)) {
+        try { $pdo->exec("ALTER TABLE lavagem_itens ADD COLUMN veiculo_id INTEGER"); }
+        catch (Throwable $e) { /* já existe */ }
+    }
+
+    /* ---------- Migra entradas antigas ---------- */
+    $rows = $pdo->query("
+        SELECT e.id, e.placa, e.veiculo_id,
+               e.veiculo_manual_marca, e.veiculo_manual_modelo,
+               e.veiculo_manual_cor,   e.veiculo_manual_ano
+        FROM lavagem_entradas e
+        WHERE NOT EXISTS (SELECT 1 FROM lavagem_veiculos v WHERE v.entrada_id = e.id)
+    ")->fetchAll();
+
+    if ($rows) {
+        $insV = $pdo->prepare("
+            INSERT INTO lavagem_veiculos
+                (entrada_id, ordem, placa, veiculo_id,
+                 manual_marca, manual_modelo, manual_cor, manual_ano)
+            VALUES (?, 1, ?, ?, ?, ?, ?, ?)
+        ");
+        $updI = $pdo->prepare("UPDATE lavagem_itens SET veiculo_id = ? WHERE entrada_id = ? AND veiculo_id IS NULL");
+
+        foreach ($rows as $r) {
+            $insV->execute([
+                (int)$r['id'], $r['placa'], $r['veiculo_id'],
+                $r['veiculo_manual_marca'], $r['veiculo_manual_modelo'],
+                $r['veiculo_manual_cor'],   $r['veiculo_manual_ano'],
+            ]);
+            $vid = (int)$pdo->lastInsertId();
+            $updI->execute([$vid, (int)$r['id']]);
+        }
+    }
+
+    $ok = true;
+}
+
+/** Lista os veículos de uma entrada. */
+function listar_veiculos_entrada(int $entradaId): array {
+    ensure_lavagem_veiculos();
+    $st = db()->prepare("
+        SELECT v.*,
+               (SELECT COALESCE(SUM(i.preco_centavos),0)
+                FROM lavagem_itens i WHERE i.veiculo_id = v.id) AS subtotal
+        FROM lavagem_veiculos v
+        WHERE v.entrada_id = ?
+        ORDER BY v.ordem, v.id
+    ");
+    $st->execute([$entradaId]);
+    return $st->fetchAll();
+}
+
+/* =========================================================
+ *  PERMISSÕES DE ACESSO
+ * ========================================================= */
+
+/** Lista de módulos do sistema (chave => rótulo). */
+function modulos_sistema(): array {
+    return [
+        'dashboard'      => 'Dashboard',
+        'clientes'       => 'Clientes',
+        'lavagens'       => 'Lavagens',
+        'entradas'       => 'Entradas',
+        'fornecedores'   => 'Fornecedores',
+        'pagamentos'     => 'Pagamentos',
+        'administrativo' => 'Administrativo',
+    ];
+}
+
+/** Adiciona a coluna `permissoes` na tabela usuarios (migração automática). */
+function ensure_permissoes_coluna(): void {
+    static $ok = false;
+    if ($ok) return;
+
+    ensure_usuarios();
+
+    $cols = db()->query("PRAGMA table_info(usuarios)")->fetchAll(PDO::FETCH_COLUMN, 1);
+    if (!in_array('permissoes', $cols, true)) {
+        try {
+            db()->exec("ALTER TABLE usuarios ADD COLUMN permissoes TEXT NOT NULL DEFAULT ''");
+        } catch (Throwable $e) { /* já existe */ }
+    }
+    $ok = true;
+}
+
+/** Retorna os módulos permitidos para um usuário (por id). */
+function permissoes_usuario(int $userId): array {
+    ensure_permissoes_coluna();
+
+    $st = db()->prepare('SELECT is_admin, permissoes FROM usuarios WHERE id = ?');
+    $st->execute([$userId]);
+    $row = $st->fetch();
+    if (!$row) return [];
+
+    /* Admin sempre tem acesso total */
+    if ((int)$row['is_admin'] === 1) return array_keys(modulos_sistema());
+
+    $raw = trim((string)($row['permissoes'] ?? ''));
+    if ($raw === '') return [];
+
+    /* Aceita JSON ou lista separada por vírgulas */
+    $arr = json_decode($raw, true);
+    if (!is_array($arr)) {
+        $arr = array_filter(array_map('trim', explode(',', $raw)));
+    }
+
+    /* Só mantém módulos válidos */
+    $validos = array_keys(modulos_sistema());
+    return array_values(array_intersect($arr, $validos));
+}
+
+/** Verifica se o usuário logado tem acesso a um módulo. */
+function tem_permissao(string $modulo): bool {
+    $u = usuario_logado();
+    if (!$u) return false;
+    if ((int)$u['is_admin'] === 1) return true;
+
+    if (!isset($_SESSION['__permissoes_cache'])) {
+        $_SESSION['__permissoes_cache'] = permissoes_usuario((int)$u['id']);
+    }
+    return in_array($modulo, $_SESSION['__permissoes_cache'], true);
+}
+
+/** Bloqueia a página se o usuário não tiver permissão. */
+function exigir_permissao(string $modulo): void {
+    if (!tem_permissao($modulo)) {
+        flash('Você não tem permissão para acessar este módulo.', 'erro');
+        header('Location: dashboard.php');
+        exit;
+    }
+}
+
+/** Limpa o cache de permissões (usar após editar o próprio usuário). */
+function limpar_cache_permissoes(): void {
+    unset($_SESSION['__permissoes_cache']);
+}
+
 
 
 
