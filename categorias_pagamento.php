@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config.php';
 $admin = exigir_admin();
+exigir_permissao('pagamentos');
 ensure_pagamentos();
 
 /* ---------- Excluir ---------- */

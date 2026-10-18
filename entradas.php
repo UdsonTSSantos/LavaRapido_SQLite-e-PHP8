@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config.php';
 exigir_login();
+exigir_permissao('entradas');
 ensure_entradas();
 
 /* ---------- Variáveis usadas em toda a página ---------- */

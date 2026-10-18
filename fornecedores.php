@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config.php';
 exigir_login();
+exigir_permissao('fornecedores');
 ensure_fornecedores();
 
 /* ---------- Excluir (POST) ---------- */

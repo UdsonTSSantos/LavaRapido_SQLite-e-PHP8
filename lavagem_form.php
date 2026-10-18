@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config.php';
 exigir_login();
+exigir_permissao('lavagens');
 ensure_lavagens();
 
 $id     = (int)($_GET['id'] ?? 0);

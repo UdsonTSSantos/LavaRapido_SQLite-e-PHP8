@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/config.php';
 exigir_login();
+exigir_permissao('clientes');
 
 /* Força a resposta como JSON desde o início, mesmo em caso de erro */
 header('Content-Type: application/json; charset=utf-8');
