@@ -233,6 +233,12 @@ tailwind.config = {
         <a href="fornecedores.php" class="<?= menu_cls('fornecedores.php', ['fornecedor_form.php'], $atual) ?>">Fornecedores</a>
       <?php endif; ?>
 
+      
+      <?php if (function_exists('tem_permissao') && tem_permissao('estoque')): ?>
+        <a href="estoque.php" class="<?= menu_cls('estoque.php', ['estoque_form.php', 'estoque_xml.php'], $atual) ?>">Estoque</a>
+      <?php endif; ?>
+      
+
       <?php if (function_exists('tem_permissao') && tem_permissao('pagamentos')): ?>
         <a href="pagamentos.php" class="<?= menu_cls('pagamentos.php', [
               'pagamento_form.php', 'dashboard_pagamentos.php',
