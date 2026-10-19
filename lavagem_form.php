@@ -85,33 +85,6 @@ $titulo = $editar ? 'Editar lavagem' : 'Nova lavagem';
 require __DIR__ . '/header.php';
 ?>
 
-<!-- ============ MÁSCARA DE MOEDA ============ -->
-<script>
-(function () {
-  const soDigitos = v => (v || '').replace(/\D+/g, '');
-
-  const Mask = {
-    money(v) {
-      v = soDigitos(v);
-      if (v === '') return '';
-      v = v.padStart(3, '0');
-      const int = v.slice(0, -2), dec = v.slice(-2);
-      return int.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + dec;
-    }
-  };
-  window.Mask = Mask;
-
-  document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('[data-mask="money"]').forEach(el => {
-      const exec = () => { el.value = Mask.money(el.value); };
-      el.addEventListener('input', exec);
-      el.addEventListener('blur',  exec);
-      exec();
-    });
-  });
-})();
-</script>
-
 <div class="max-w-3xl mx-auto">
   <form method="post" class="bg-white rounded-2xl shadow-card border border-slate-200 p-6 sm:p-8 space-y-6" novalidate>
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -213,5 +186,50 @@ require __DIR__ . '/header.php';
     </div>
   </form>
 </div>
+
+<script>
+/* =========================================================
+ *  MÁSCARA DE MOEDA (Padrão Brasileiro)
+ * ========================================================= */
+document.addEventListener('DOMContentLoaded', () => {
+  function formatarMoedaBR(v) {
+    v = String(v || '').trim();
+    if (v === '') return '';
+    
+    // Se o usuário digitou vírgula, assume que é o decimal
+    if (v.includes(',')) {
+      let partes = v.split(',');
+      let int = partes[0].replace(/\D/g, '') || '0';
+      let dec = (partes[1].replace(/\D/g, '') + '00').slice(0, 2);
+      return int.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + dec;
+    }
+    
+    // Se digitou só números, vira inteiro + ",00"
+    const dig = v.replace(/\D/g, '');
+    if (dig === '') return '';
+    return dig.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',00';
+  }
+
+  document.querySelectorAll('[data-mask="money"]').forEach(el => {
+    // 1. Durante a digitação: apenas bloqueia caracteres inválidos
+    el.addEventListener('input', function() {
+      this.value = this.value.replace(/[^\d.,]/g, '');
+    });
+
+    // 2. Ao sair do campo (blur): aplica a formatação brasileira
+    el.addEventListener('blur', function() {
+      this.value = formatarMoedaBR(this.value);
+    });
+
+    // 3. Ao focar: se estiver "0,00", limpa para digitar do zero
+    el.addEventListener('focus', function() {
+      if (this.value === '0,00') this.value = '';
+    });
+    
+    // Aplica formatação inicial caso a página já carregue com valor
+    el.value = formatarMoedaBR(el.value);
+  });
+});
+</script>
 
 <?php require __DIR__ . '/footer.php'; ?>

@@ -1295,3 +1295,27 @@ function movimentar_estoque(int $itemId, string $tipo, float $qtd, string $docum
         throw $e;
     }
 }
+
+function ensure_lavagem_pecas(): void {
+    static $ok = false;
+    if ($ok) return;
+
+    $pdo = db();
+    ensure_entradas();
+    ensure_estoque();
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS lavagem_pecas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entrada_id INTEGER NOT NULL,
+            veiculo_id INTEGER NOT NULL,
+            estoque_item_id INTEGER NOT NULL,
+            nome TEXT NOT NULL DEFAULT '',
+            quantidade REAL NOT NULL DEFAULT 1,
+            preco_unitario_centavos INTEGER NOT NULL DEFAULT 0,
+            desconto_centavos INTEGER NOT NULL DEFAULT 0,
+            total_centavos INTEGER NOT NULL DEFAULT 0
+        )
+    ");
+    $ok = true;
+}
