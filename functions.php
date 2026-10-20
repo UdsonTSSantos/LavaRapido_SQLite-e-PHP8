@@ -87,6 +87,8 @@ function modulos_sistema(): array {
         'fornecedores'   => 'Fornecedores',
         'pagamentos'     => 'Pagamentos',
         'administrativo' => 'Administrativo',
+        'estoque'        => 'Estoque',
+        'comissoes'      => 'Comissões',
     ];
 }
 
@@ -627,6 +629,7 @@ function ensure_lavagens(): void {
                 descricao TEXT NOT NULL DEFAULT '',
                 preco_centavos INTEGER NOT NULL DEFAULT 0,
                 comissao_centavos INTEGER NOT NULL DEFAULT 0,
+                paga_comissao INTEGER NOT NULL DEFAULT 1,
                 duracao_min INTEGER NOT NULL DEFAULT 0,
                 ativo INTEGER NOT NULL DEFAULT 1,
                 ordem INTEGER NOT NULL DEFAULT 0,
@@ -634,15 +637,19 @@ function ensure_lavagens(): void {
                 atualizado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
             )
         ");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lavagens_nome  ON lavagens(nome)");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lavagens_ativo ON lavagens(ativo)");
     } else {
         $cols = $pdo->query("PRAGMA table_info(lavagens)")->fetchAll(PDO::FETCH_COLUMN, 1);
         if (!in_array('comissao_centavos', $cols, true)) {
-            try { $pdo->exec("ALTER TABLE lavagens ADD COLUMN comissao_centavos INTEGER NOT NULL DEFAULT 0"); }
-            catch (Throwable $e) { /* já existe */ }
+            try { $pdo->exec("ALTER TABLE lavagens ADD COLUMN comissao_centavos INTEGER NOT NULL DEFAULT 0"); } catch (Throwable $e) {}
+        }
+        if (!in_array('paga_comissao', $cols, true)) {
+            try { $pdo->exec("ALTER TABLE lavagens ADD COLUMN paga_comissao INTEGER NOT NULL DEFAULT 1"); } catch (Throwable $e) {}
         }
     }
+    
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lavagens_nome  ON lavagens(nome)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lavagens_ativo ON lavagens(ativo)");
+    
     $ok = true;
 }
 
@@ -818,6 +825,62 @@ function ensure_lavagem_veiculos(): void {
     $ok = true;
 }
 
+function ensure_lavagem_pecas(): void {
+    static $ok = false;
+    if ($ok) return;
+
+    $pdo = db();
+    ensure_entradas();
+    ensure_estoque();
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS lavagem_pecas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entrada_id INTEGER NOT NULL,
+            veiculo_id INTEGER NOT NULL,
+            estoque_item_id INTEGER NOT NULL,
+            nome TEXT NOT NULL DEFAULT '',
+            quantidade REAL NOT NULL DEFAULT 1,
+            preco_unitario_centavos INTEGER NOT NULL DEFAULT 0,
+            desconto_centavos INTEGER NOT NULL DEFAULT 0,
+            total_centavos INTEGER NOT NULL DEFAULT 0
+        )
+    ");
+    $ok = true;
+}
+
+function ensure_comissoes(): void {
+    static $ok = false;
+    if ($ok) return;
+
+    $pdo = db();
+    ensure_lavagens();
+    ensure_entradas();
+
+    $colsLav = $pdo->query("PRAGMA table_info(lavagens)")->fetchAll(PDO::FETCH_COLUMN, 1);
+    if (!in_array('paga_comissao', $colsLav, true)) {
+        try { $pdo->exec("ALTER TABLE lavagens ADD COLUMN paga_comissao INTEGER NOT NULL DEFAULT 1"); }
+        catch (Throwable $e) {}
+    }
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS comissoes_lancadas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entrada_id INTEGER NOT NULL,
+            item_id INTEGER NOT NULL,
+            usuario_id INTEGER NOT NULL,
+            nome_lavagem TEXT NOT NULL DEFAULT '',
+            valor_centavos INTEGER NOT NULL DEFAULT 0,
+            data_entrada TEXT NOT NULL,
+            pago INTEGER NOT NULL DEFAULT 0
+        )
+    ");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_comissoes_user ON comissoes_lancadas(usuario_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_comissoes_data ON comissoes_lancadas(data_entrada)");
+
+    $ok = true;
+}
+
 function listar_veiculos_entrada(int $entradaId): array {
     ensure_lavagem_veiculos();
     $st = db()->prepare("
@@ -859,7 +922,82 @@ function contar_lavagens_total(string $placa): int {
 }
 
 /* =========================================================
- *  APIBRASIL (Consulta de Placa)
+ *  ESTOQUE
+ * ========================================================= */
+
+function ensure_estoque(): void {
+    static $ok = false;
+    if ($ok) return;
+
+    $pdo = db();
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS estoque_itens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT NOT NULL UNIQUE,
+            nome TEXT NOT NULL DEFAULT '',
+            unidade TEXT NOT NULL DEFAULT 'UN',
+            quantidade REAL NOT NULL DEFAULT 0,
+            estoque_minimo REAL NOT NULL DEFAULT 0,
+            preco_custo_centavos INTEGER NOT NULL DEFAULT 0,
+            preco_venda_centavos INTEGER NOT NULL DEFAULT 0,
+            ativo INTEGER NOT NULL DEFAULT 1,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            atualizado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS estoque_movimentacoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            quantidade REAL NOT NULL,
+            documento TEXT NOT NULL DEFAULT '',
+            observacao TEXT NOT NULL DEFAULT '',
+            criado_por INTEGER,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    ");
+    $ok = true;
+}
+
+function buscar_item_estoque(int $id): ?array {
+    ensure_estoque();
+    $st = db()->prepare('SELECT * FROM estoque_itens WHERE id = ?');
+    $st->execute([$id]);
+    return $st->fetch() ?: null;
+}
+
+function movimentar_estoque(int $itemId, string $tipo, float $qtd, string $documento = '', string $obs = ''): void {
+    if ($qtd <= 0) return;
+    $u = usuario_logado();
+    
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("
+            INSERT INTO estoque_movimentacoes (item_id, tipo, quantidade, documento, observacao, criado_por)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ")->execute([$itemId, $tipo, $qtd, $documento, $obs, (int)($u['id'] ?? 0)]);
+
+        $operador = ($tipo === 'entrada') ? '+' : '-';
+        $pdo->prepare("
+            UPDATE estoque_itens
+            SET quantidade = quantidade {$operador} ?,
+                atualizado_em = datetime('now','localtime')
+            WHERE id = ?
+        ")->execute([$qtd, $itemId]);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
+/* =========================================================
+ *  APIBRASIL
  * ========================================================= */
 
 function apibrasil_consultar_placa(string $placa): array {
@@ -1211,111 +1349,4 @@ function sms_veiculo_pronto(array $entrada, ?array $empresa = null): string {
     $nome  = $emp['nome_fantasia'] ?: ($emp['razao_social'] ?: 'Lava-Rápido');
     $placa = formatar_placa($entrada['placa']);
     return "Ola! Seu veiculo {$placa} esta pronto para retirada em {$nome}. Obrigado!";
-}
-
-/* =========================================================
- *  ESTOQUE DE PEÇAS
- * ========================================================= */
-
-function ensure_estoque(): void {
-    static $ok = false;
-    if ($ok) return;
-
-    $pdo = db();
-
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS estoque_itens (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            codigo TEXT NOT NULL UNIQUE,
-            nome TEXT NOT NULL DEFAULT '',
-            unidade TEXT NOT NULL DEFAULT 'UN',
-            quantidade REAL NOT NULL DEFAULT 0,
-            estoque_minimo REAL NOT NULL DEFAULT 0,
-            preco_custo_centavos INTEGER NOT NULL DEFAULT 0,
-            preco_venda_centavos INTEGER NOT NULL DEFAULT 0,
-            ativo INTEGER NOT NULL DEFAULT 1,
-            criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-            atualizado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-        )
-    ");
-
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS estoque_movimentacoes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id INTEGER NOT NULL,
-            tipo TEXT NOT NULL, -- 'entrada' ou 'saida'
-            quantidade REAL NOT NULL,
-            documento TEXT NOT NULL DEFAULT '',
-            observacao TEXT NOT NULL DEFAULT '',
-            criado_por INTEGER,
-            criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-            FOREIGN KEY (item_id) REFERENCES estoque_itens(id) ON DELETE CASCADE
-        )
-    ");
-
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_estoque_codigo ON estoque_itens(codigo)");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mov_item ON estoque_movimentacoes(item_id)");
-
-    $ok = true;
-}
-
-function buscar_item_estoque(int $id): ?array {
-    ensure_estoque();
-    $st = db()->prepare('SELECT * FROM estoque_itens WHERE id = ?');
-    $st->execute([$id]);
-    return $st->fetch() ?: null;
-}
-
-/** Registra uma movimentação de estoque e atualiza a quantidade atual */
-function movimentar_estoque(int $itemId, string $tipo, float $qtd, string $documento = '', string $obs = ''): void {
-    if ($qtd <= 0) return;
-    $u = usuario_logado();
-    
-    $pdo = db();
-    $pdo->beginTransaction();
-    try {
-        // 1. Registra a movimentação
-        $pdo->prepare("
-            INSERT INTO estoque_movimentacoes (item_id, tipo, quantidade, documento, observacao, criado_por)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ")->execute([$itemId, $tipo, $qtd, $documento, $obs, (int)($u['id'] ?? 0)]);
-
-        // 2. Atualiza o saldo
-        $operador = ($tipo === 'entrada') ? '+' : '-';
-        $pdo->prepare("
-            UPDATE estoque_itens
-            SET quantidade = quantidade {$operador} ?,
-                atualizado_em = datetime('now','localtime')
-            WHERE id = ?
-        ")->execute([$qtd, $itemId]);
-
-        $pdo->commit();
-    } catch (Throwable $e) {
-        $pdo->rollBack();
-        throw $e;
-    }
-}
-
-function ensure_lavagem_pecas(): void {
-    static $ok = false;
-    if ($ok) return;
-
-    $pdo = db();
-    ensure_entradas();
-    ensure_estoque();
-
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS lavagem_pecas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entrada_id INTEGER NOT NULL,
-            veiculo_id INTEGER NOT NULL,
-            estoque_item_id INTEGER NOT NULL,
-            nome TEXT NOT NULL DEFAULT '',
-            quantidade REAL NOT NULL DEFAULT 1,
-            preco_unitario_centavos INTEGER NOT NULL DEFAULT 0,
-            desconto_centavos INTEGER NOT NULL DEFAULT 0,
-            total_centavos INTEGER NOT NULL DEFAULT 0
-        )
-    ");
-    $ok = true;
 }

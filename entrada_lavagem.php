@@ -7,6 +7,7 @@ ensure_clientes();
 ensure_lavagem_veiculos();
 ensure_lavagem_pecas();
 ensure_estoque();
+ensure_comissoes();
 
 $u = usuario_logado();
 
@@ -25,13 +26,11 @@ if ($editar) {
         header('Location: entradas.php');
         exit;
     }
-
     $veiculosExistentes = listar_veiculos_entrada($id);
 }
 
 $erros = [];
 
-// AQUI ESTÁ A CORREÇÃO: Aceita tanto 'salvar' quanto 'salvar_imprimir'
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['salvar', 'salvar_imprimir'])) {
     csrf_validar();
     $imprimirAgora = ($_POST['acao'] === 'salvar_imprimir');
@@ -75,6 +74,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
             $pecas_ids    = array_map('intval', (array)($_POST["pecas_$ord"] ?? []));
             $pecas_qtde   = (array)($_POST["peca_qtd_$ord"] ?? []);
             $pecas_desc   = (array)($_POST["peca_desc_$ord"] ?? []);
+            
+            $servicos_equipe = $_POST["servico_equipe_$ord"] ?? [];
 
             if (!validar_placa($placa)) {
                 $erros[] = "Veículo {$ord}: informe uma placa válida.";
@@ -90,10 +91,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
                 $st = db()->prepare("SELECT * FROM lavagens WHERE id IN ($in) AND ativo = 1");
                 $st->execute($servicos_ids);
                 foreach ($st->fetchAll() as $lav) {
+                    $eqIds = [];
+                    if (!empty($servicos_equipe[$lav['id']])) {
+                        $eqIds = array_filter(explode(',', $servicos_equipe[$lav['id']]));
+                    }
+
                     $itens[] = [
-                        'lavagem_id'     => (int)$lav['id'],
-                        'nome'           => $lav['nome'],
-                        'preco_centavos' => (int)$lav['preco_centavos'],
+                        'lavagem_id'        => (int)$lav['id'],
+                        'nome'              => $lav['nome'],
+                        'preco_centavos'    => (int)$lav['preco_centavos'],
+                        'paga_comissao'     => (int)($lav['paga_comissao'] ?? 1),
+                        'comissao_centavos' => (int)($lav['comissao_centavos'] ?? 0),
+                        'equipe'            => $eqIds
                     ];
                     $subtotalV += (int)$lav['preco_centavos'];
                 }
@@ -104,7 +113,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
                 foreach ($pecas_ids as $k => $pid) {
                     $qtd = (float)str_replace(',', '.', $pecas_qtde[$k] ?? 1);
                     $descCent = moeda_para_centavos($pecas_desc[$k] ?? '0');
-                    
                     if ($qtd <= 0) continue;
                     
                     $stP = db()->prepare("SELECT * FROM estoque_itens WHERE id = ?");
@@ -114,14 +122,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
                     if ($item) {
                         $totalItem = ((int)$item['preco_venda_centavos'] * $qtd) - $descCent;
                         if ($totalItem < 0) $totalItem = 0;
-                        
                         $pecas[] = [
-                            'id' => (int)$item['id'],
-                            'nome' => $item['nome'],
-                            'qtd' => $qtd,
-                            'preco_centavos' => (int)$item['preco_venda_centavos'],
-                            'desconto_centavos' => $descCent,
-                            'total_centavos' => (int)$totalItem
+                            'id' => (int)$item['id'], 'nome' => $item['nome'], 'qtd' => $qtd,
+                            'preco_centavos' => (int)$item['preco_venda_centavos'], 'desconto_centavos' => $descCent, 'total_centavos' => (int)$totalItem
                         ];
                         $subtotalV += $totalItem;
                     }
@@ -134,22 +137,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
             }
 
             $veiculos[] = [
-                'ordem'         => $ord,
-                'placa'         => $placa,
-                'manual_marca'  => $m_marca,
-                'manual_modelo' => $m_modelo,
-                'manual_cor'    => $m_cor,
-                'manual_ano'    => $m_ano,
-                'itens'         => $itens,
-                'pecas'         => $pecas,
-                'subtotal'      => $subtotalV,
+                'ordem' => $ord, 'placa' => $placa, 'manual_marca' => $m_marca, 'manual_modelo' => $m_modelo,
+                'manual_cor' => $m_cor, 'manual_ano' => $m_ano, 'itens' => $itens, 'pecas' => $pecas, 'subtotal' => $subtotalV,
             ];
             $subtotalGeral += $subtotalV;
         }
     }
 
-    $desc_centavos = 0;
-    $desc_percent  = 0;
+    $desc_centavos = 0; $desc_percent  = 0;
     if (!$erros) {
         if ($desconto_tipo === 'percentual') {
             $desc_percent  = max(0, min(100, (int)preg_replace('/\D/', '', $desconto_raw)));
@@ -183,7 +178,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
                     $pdo->prepare("UPDATE estoque_itens SET quantidade = quantidade + ? WHERE id = ?")->execute([$old['quantidade'], $old['estoque_item_id']]);
                 }
                 $pdo->prepare('DELETE FROM lavagem_pecas WHERE entrada_id = ?')->execute([$id]);
-
+                $pdo->prepare('DELETE FROM comissoes_lancadas WHERE entrada_id = ?')->execute([$id]);
+                
                 $pdo->prepare("
                     UPDATE lavagem_entradas SET
                         cliente_id = :cid, cliente_nome_avulso = :cna, cliente_celular = :ccel,
@@ -229,6 +225,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
             $insV = $pdo->prepare("INSERT INTO lavagem_veiculos (entrada_id, ordem, placa, veiculo_id, manual_marca, manual_modelo, manual_cor, manual_ano) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
             $insI = $pdo->prepare("INSERT INTO lavagem_itens (entrada_id, veiculo_id, lavagem_id, nome, preco_centavos) VALUES (?, ?, ?, ?, ?)");
             $insP = $pdo->prepare("INSERT INTO lavagem_pecas (entrada_id, veiculo_id, estoque_item_id, nome, quantidade, preco_unitario_centavos, desconto_centavos, total_centavos) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $insC = $pdo->prepare("INSERT INTO comissoes_lancadas (entrada_id, item_id, usuario_id, nome_lavagem, valor_centavos, data_entrada) VALUES (?, ?, ?, ?, ?, ?)");
 
             foreach ($veiculos as $v) {
                 $vLocal = buscar_veiculo_por_placa($v['placa']);
@@ -238,6 +235,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
                     $pdo->prepare("INSERT INTO veiculos (placa, marca, modelo, cor, ano_modelo, origem) VALUES (?, ?, ?, ?, ?, 'manual') ON CONFLICT(placa) DO UPDATE SET marca=excluded.marca, modelo=excluded.modelo, cor=excluded.cor, ano_modelo=excluded.ano_modelo, atualizado_em=datetime('now','localtime')")->execute([$v['placa'], $v['manual_marca'], $v['manual_modelo'], $v['manual_cor'], $v['manual_ano']]);
                     $vLocal = buscar_veiculo_por_placa($v['placa']);
                     $vid = $vLocal ? (int)$vLocal['id'] : null;
+                } elseif ($vid && ($v['manual_modelo'] || $v['manual_cor'])) {
+                     $pdo->prepare("UPDATE veiculos SET modelo=?, cor=?, atualizado_em=datetime('now','localtime') WHERE id=?")->execute([$v['manual_modelo'], $v['manual_cor'], $vid]);
                 }
 
                 $insV->execute([$entrada_id, $v['ordem'], $v['placa'], $vid, $v['manual_marca'], $v['manual_modelo'], $v['manual_cor'], $v['manual_ano']]);
@@ -245,6 +244,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
 
                 foreach ($v['itens'] as $it) {
                     $insI->execute([$entrada_id, $novoVeiculoId, $it['lavagem_id'], $it['nome'], $it['preco_centavos']]);
+                    $itemId = (int)$pdo->lastInsertId();
+
+                    // GERA COMISSÃO SE TIVER EQUIPE E SE O SERVIÇO PAGA COMISSÃO
+                    if ($it['paga_comissao'] && !empty($it['equipe']) && $it['comissao_centavos'] > 0) {
+                        $qtdPessoas = count($it['equipe']);
+                        $valorDividido = (int) round($it['comissao_centavos'] / $qtdPessoas);
+                        
+                        if ($valorDividido > 0) {
+                            foreach ($it['equipe'] as $uid) {
+                                $insC->execute([$entrada_id, $itemId, (int)$uid, $it['nome'], $valorDividido, $data_entrada]);
+                            }
+                        }
+                    }
                 }
                 
                 foreach ($v['pecas'] as $p) {
@@ -256,7 +268,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
             $pdo->commit();
             flash($mensagem, 'sucesso');
             
-            // REDIRECIONAMENTO INTELIGENTE
             if ($imprimirAgora) {
                 header('Location: cupom_lavagem.php?entrada=' . $entrada_id . '&auto=1');
             } else {
@@ -273,45 +284,106 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
 $clientes = db()->query('SELECT id, nome, celular, telefone FROM clientes WHERE ativo = 1 ORDER BY nome COLLATE NOCASE')->fetchAll();
 $servicos = db()->query('SELECT * FROM lavagens WHERE ativo = 1 ORDER BY nome COLLATE NOCASE')->fetchAll();
 $estoque  = db()->query('SELECT * FROM estoque_itens WHERE ativo = 1 ORDER BY nome COLLATE NOCASE')->fetchAll();
+$usuarios = db()->query('SELECT id, nome FROM usuarios WHERE ativo = 1 ORDER BY nome COLLATE NOCASE')->fetchAll();
 
 $v = [
-    'cliente_id'      => $entrada['cliente_id']          ?? 0,
-    'cliente_nome'    => $entrada['cliente_nome_avulso'] ?? '',
-    'cliente_celular' => $entrada['cliente_celular']     ?? '',
-    'data_entrada'    => $entrada['data_entrada']        ?? date('Y-m-d'),
-    'hora_entrada'    => $entrada['hora_entrada']        ?? date('H:i'),
-    'previsao_horas'  => (int)($entrada['previsao_saida_horas'] ?? 0),
-    'observacoes'     => $entrada['observacoes']         ?? '',
-    'avarias'         => $entrada['avarias']             ?? '',
+    'cliente_id' => $entrada['cliente_id'] ?? 0, 'cliente_nome' => $entrada['cliente_nome_avulso'] ?? '',
+    'cliente_celular' => $entrada['cliente_celular'] ?? '', 'data_entrada' => $entrada['data_entrada'] ?? date('Y-m-d'),
+    'hora_entrada' => $entrada['hora_entrada'] ?? date('H:i'), 'previsao_horas' => (int)($entrada['previsao_saida_horas'] ?? 0),
+    'observacoes' => $entrada['observacoes'] ?? '', 'avarias' => $entrada['avarias'] ?? '',
 ];
 
-$descPercent = (int)($entrada['desconto_percentual'] ?? 0);
-$descCent    = (int)($entrada['desconto_centavos']   ?? 0);
+$descPercent = (int)($entrada['desconto_percentual'] ?? 0); $descCent = (int)($entrada['desconto_centavos'] ?? 0);
 if ($descPercent > 0) { $v['desconto_tipo'] = 'percentual'; $v['desconto'] = (string)$descPercent; } 
 else { $v['desconto_tipo'] = 'valor'; $v['desconto'] = $descCent > 0 ? centavos_para_moeda($descCent) : '0,00'; }
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $v['desconto_tipo'] = $_POST['desconto_tipo'] ?? $v['desconto_tipo'];
-    $v['desconto']      = $_POST['desconto']      ?? $v['desconto'];
-}
+if ($_SERVER['REQUEST_METHOD'] === 'POST') { $v['desconto_tipo'] = $_POST['desconto_tipo'] ?? $v['desconto_tipo']; $v['desconto'] = $_POST['desconto'] ?? $v['desconto']; }
 
 $veiculosForm = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($ordens)) {
-    foreach ($ordens as $ord) {
-        $veiculosForm[] = ['ordem' => $ord, 'placa' => normalizar_placa((string)($_POST["placa_$ord"] ?? '')), 'manual_marca' => (string)($_POST["manual_marca_$ord"]  ?? ''), 'manual_modelo' => (string)($_POST["manual_modelo_$ord"] ?? ''), 'manual_cor' => (string)($_POST["manual_cor_$ord"]    ?? ''), 'manual_ano' => (string)($_POST["manual_ano_$ord"]    ?? ''), 'itens' => [], 'pecas' => []];
+    foreach ($ordens as $ord) { 
+        $servicos_ids_post = array_map('intval', (array)($_POST["servicos_$ord"] ?? []));
+        $servicos_equipe_post = $_POST["servico_equipe_$ord"] ?? [];
+        
+        $itens_render = [];
+        if ($servicos_ids_post) {
+            $in = implode(',', array_fill(0, count($servicos_ids_post), '?'));
+            $st = db()->prepare("SELECT * FROM lavagens WHERE id IN ($in)");
+            $st->execute($servicos_ids_post);
+            foreach ($st->fetchAll() as $lav) {
+                $itens_render[] = [
+                    'lavagem_id' => $lav['id'],
+                    'nome' => $lav['nome'],
+                    'preco_centavos' => $lav['preco_centavos'],
+                    'paga_comissao' => $lav['paga_comissao'],
+                    'comissao_centavos' => $lav['comissao_centavos'],
+                    'equipe' => $servicos_equipe_post[$lav['id']] ?? ''
+                ];
+            }
+        }
+
+        $pecas_ids_post = array_map('intval', (array)($_POST["pecas_$ord"] ?? []));
+        $pecas_qtde_post = (array)($_POST["peca_qtd_$ord"] ?? []);
+        $pecas_desc_post = (array)($_POST["peca_desc_$ord"] ?? []);
+        
+        $pecas_render = [];
+        if ($pecas_ids_post) {
+            foreach ($pecas_ids_post as $k => $pid) {
+                $stP = db()->prepare("SELECT * FROM estoque_itens WHERE id = ?");
+                $stP->execute([$pid]);
+                $item = $stP->fetch();
+                if ($item) {
+                    $qtd = (float)str_replace(',', '.', $pecas_qtde_post[$k] ?? 1);
+                    $descCent = moeda_para_centavos($pecas_desc_post[$k] ?? '0');
+                    $pecas_render[] = [
+                        'id' => $item['id'], 'nome' => $item['nome'], 'qtd' => $qtd,
+                        'preco_centavos' => $item['preco_venda_centavos'], 'desconto_centavos' => $descCent, 'total_centavos' => ((int)$item['preco_venda_centavos'] * $qtd) - $descCent
+                    ];
+                }
+            }
+        }
+
+        $veiculosForm[] = [
+            'ordem' => $ord, 'placa' => normalizar_placa((string)($_POST["placa_$ord"] ?? '')), 
+            'manual_marca' => (string)($_POST["manual_marca_$ord"] ?? ''), 'manual_modelo' => (string)($_POST["manual_modelo_$ord"] ?? ''), 
+            'manual_cor' => (string)($_POST["manual_cor_$ord"] ?? ''), 'manual_ano' => (string)($_POST["manual_ano_$ord"] ?? ''), 
+            'itens' => $itens_render, 'pecas' => $pecas_render
+        ]; 
     }
 } elseif ($editar && $veiculosExistentes) {
     foreach ($veiculosExistentes as $vv) {
-        $st = db()->prepare('SELECT lavagem_id, nome, preco_centavos FROM lavagem_itens WHERE veiculo_id = ? ORDER BY id'); $st->execute([(int)$vv['id']]);
-        $stP = db()->prepare('SELECT estoque_item_id as id, nome, quantidade as qtd, preco_unitario_centavos as preco_centavos, desconto_centavos, total_centavos FROM lavagem_pecas WHERE veiculo_id = ? ORDER BY id'); $stP->execute([(int)$vv['id']]);
-        $veiculosForm[] = ['ordem' => (int)$vv['ordem'], 'placa' => $vv['placa'], 'manual_marca' => $vv['manual_marca'], 'manual_modelo' => $vv['manual_modelo'], 'manual_cor' => $vv['manual_cor'], 'manual_ano' => $vv['manual_ano'], 'itens' => $st->fetchAll(), 'pecas' => $stP->fetchAll()];
+        $st = db()->prepare('SELECT id, lavagem_id, nome, preco_centavos FROM lavagem_itens WHERE veiculo_id = ? ORDER BY id'); 
+        $st->execute([(int)$vv['id']]);
+        $stP = db()->prepare('SELECT estoque_item_id as id, nome, quantidade as qtd, preco_unitario_centavos as preco_centavos, desconto_centavos, total_centavos FROM lavagem_pecas WHERE veiculo_id = ? ORDER BY id'); 
+        $stP->execute([(int)$vv['id']]);
+        
+        $itensBanco = $st->fetchAll();
+        foreach($itensBanco as &$itB) {
+            $stC = db()->prepare("SELECT GROUP_CONCAT(usuario_id) FROM comissoes_lancadas WHERE item_id = ?");
+            $stC->execute([$itB['id']]);
+            $itB['equipe'] = $stC->fetchColumn() ?: '';
+        }
+        
+        $veiculosForm[] = [
+            'ordem' => (int)$vv['ordem'], 'placa' => $vv['placa'], 'manual_marca' => $vv['manual_marca'], 
+            'manual_modelo' => $vv['manual_modelo'], 'manual_cor' => $vv['manual_cor'], 'manual_ano' => $vv['manual_ano'], 
+            'itens' => $itensBanco, 'pecas' => $stP->fetchAll()
+        ];
     }
 }
-if (!$veiculosForm) {
-    $veiculosForm[] = ['ordem' => 1, 'placa' => '', 'manual_marca' => '', 'manual_modelo' => '', 'manual_cor' => '', 'manual_ano' => '', 'itens' => [], 'pecas' => []];
+if (!$veiculosForm) { 
+    $veiculosForm[] = ['ordem' => 1, 'placa' => '', 'manual_marca' => '', 'manual_modelo' => '', 'manual_cor' => '', 'manual_ano' => '', 'itens' => [], 'pecas' => []]; 
 }
 
-$servicosJS = array_map(fn($s) => ['id' => (int)$s['id'], 'nome' => $s['nome'], 'preco' => (int)$s['preco_centavos']], $servicos);
+$servicosJS = array_map(fn($s) => [
+    'id' => (int)$s['id'], 
+    'nome' => $s['nome'], 
+    'preco' => (int)$s['preco_centavos'], 
+    'paga' => (int)($s['paga_comissao'] ?? 1),
+    'comissao' => (int)($s['comissao_centavos'] ?? 0)
+], $servicos);
+
 $estoqueJS  = array_map(fn($e) => ['id' => (int)$e['id'], 'nome' => $e['nome'], 'preco' => (int)$e['preco_venda_centavos'], 'qtd' => (float)$e['quantidade']], $estoque);
+$usuariosJS = array_map(fn($u) => ['id' => (int)$u['id'], 'nome' => $u['nome']], $usuarios);
 
 $titulo = $editar ? 'Editar entrada' : 'Nova entrada';
 require __DIR__ . '/header.php';
@@ -331,9 +403,6 @@ require __DIR__ . '/header.php';
 
   <form method="post" id="formEntrada" class="bg-white rounded-2xl shadow-card border border-slate-200 p-6 sm:p-8 space-y-6" novalidate>
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-    
-    <!-- REMOVIDO O INPUT HIDDEN "ACAO" QUE CAUSAVA CONFLITO -->
-    
     <input type="hidden" name="id" value="<?= $editar ? (int)$id : '' ?>">
     <input type="hidden" name="cliente_id" id="cliente_id" value="<?= (int)$v['cliente_id'] ?>">
     <input type="hidden" name="data_entrada" id="dataEntrada" value="<?= e($v['data_entrada']) ?>">
@@ -415,111 +484,246 @@ require __DIR__ . '/header.php';
   </form>
 </div>
 
-<script>
-(function () {
-  function soDigitos(v) { return String(v || '').replace(/\D+/g, ''); }
-  function brl(c) { return 'R$ ' + (c / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
-  function formatarMoedaBR(v) {
-    v = String(v || '').trim(); if (v === '') return '';
-    if (v.indexOf(',') !== -1) { var partes = v.split(','); var int = partes[0].replace(/\D/g, '') || '0'; var dec = (partes[1].replace(/\D/g, '') + '00').slice(0, 2); return int.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + dec; }
-    var dig = v.replace(/\D/g, ''); if (dig === '') return ''; return dig.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',00';
-  }
-  function mascararCelular(v) {
-    v = soDigitos(v).slice(0, 11); if (v.length <= 2) return v;
-    if (v.length <= 7) return '(' + v.slice(0, 2) + ') ' + v.slice(2);
-    if (v.length <= 10) return '(' + v.slice(0, 2) + ') ' + v.slice(2, 6) + '-' + v.slice(6);
-    return '(' + v.slice(0, 2) + ') ' + v.slice(2, 7) + '-' + v.slice(7);
-  }
-  function escapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+<!-- MODAL DE EQUIPE -->
+<div id="modalEquipe" class="hidden fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+    <div class="px-5 py-3 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-2xl">
+      <h3 class="font-bold text-slate-800">Quem realizou?</h3>
+      <button type="button" class="btn-fechar-eq text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
+    </div>
+    <div class="px-5 py-4 space-y-3 max-h-[60vh] overflow-y-auto" id="listaEquipe">
+      <!-- Preenchido via JS -->
+    </div>
+    <div class="px-5 py-3 border-t border-slate-200 flex justify-end gap-2 bg-slate-50 rounded-b-2xl">
+      <button type="button" class="btn-fechar-eq px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-700 font-semibold text-sm">Cancelar</button>
+      <button type="button" onclick="salvarEquipe()" class="px-4 py-2 rounded-lg bg-brand-500 text-white font-semibold text-sm shadow-sm">Confirmar</button>
+    </div>
+  </div>
+</div>
 
+<script>
   var SERVICOS = <?= json_encode($servicosJS, JSON_UNESCAPED_UNICODE) ?>;
   var ESTOQUE  = <?= json_encode($estoqueJS, JSON_UNESCAPED_UNICODE) ?>;
+  var USUARIOS = <?= json_encode($usuariosJS, JSON_UNESCAPED_UNICODE) ?>;
   var VEICULOS_INICIAIS = <?= json_encode($veiculosForm, JSON_UNESCAPED_UNICODE) ?>;
 
-  var inputNome = document.getElementById('cliente_nome');
-  var inputCel  = document.getElementById('cliente_celular');
-  var hiddenCli = document.getElementById('cliente_id');
-  if (inputCel) { var aplicarCel = function () { inputCel.value = mascararCelular(inputCel.value); }; inputCel.addEventListener('input', aplicarCel); inputCel.addEventListener('blur', aplicarCel); aplicarCel(); }
-  function vincularCliente() {
-    var val = inputNome.value.trim(); var achou = null;
-    document.getElementById('listaClientes').querySelectorAll('option').forEach(function (o) { if (o.dataset.nome === val) achou = o; });
-    if (achou) { hiddenCli.value = achou.dataset.id; if (!inputCel.value.trim() && achou.dataset.celular) { inputCel.value = achou.dataset.celular; inputCel.dispatchEvent(new Event('input')); } } else { hiddenCli.value = 0; }
-  }
-  inputNome.addEventListener('input', vincularCliente); inputNome.addEventListener('change', vincularCliente);
+  function soDigitos(v) { return String(v || '').replace(/\D+/g, ''); }
+  function brl(c) { return 'R$ ' + (c / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+  function escapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-  var wrap = document.getElementById('veiculosWrap');
-  var proximaOrd = 1;
+  var inputAlvo = null;
+  var btnAlvo = null;
 
-  function htmlServicosOpcoes() { var html = '<option value="">Selecione um serviço...</option>'; SERVICOS.forEach(function (s) { html += '<option value="' + s.id + '" data-preco="' + s.preco + '" data-nome="' + escapeHtml(s.nome) + '">' + escapeHtml(s.nome) + ' — ' + brl(s.preco) + '</option>'; }); return html; }
-  function htmlPecasOpcoes() { var html = '<option value="">Selecione uma peça...</option>'; ESTOQUE.forEach(function (p) { var aviso = p.qtd <= 2 ? ' ⚠️ (Apenas ' + p.qtd + ' em estoque)' : ''; var style = p.qtd <= 2 ? 'style="color:#e11d48; font-weight:bold;"' : ''; html += '<option value="' + p.id + '" data-preco="' + p.preco + '" data-nome="' + escapeHtml(p.nome) + '" ' + style + '>' + escapeHtml(p.nome) + ' — ' + brl(p.preco) + aviso + '</option>'; }); return html; }
-
-  function htmlBlocoVeiculo(ord, dados) {
-    dados = dados || {};
-    var servicosPreenchidos = ''; if (dados.itens) { dados.itens.forEach(function (it) { servicosPreenchidos += htmlServicoSelecionado(ord, it.lavagem_id, it.nome, parseInt(it.preco_centavos, 10)); }); }
-    var pecasPreenchidas = ''; if (dados.pecas) { dados.pecas.forEach(function (p) { var totalPeca = parseInt(p.total_centavos, 10); pecasPreenchidas += htmlPecaSelecionada(ord, p.id, p.nome, p.qtd, parseInt(p.preco_centavos, 10), parseInt(p.desconto_centavos, 10)); }); }
-
-    return ''
-    + '<div class="veiculo-block border border-slate-200 rounded-xl p-4 space-y-4 bg-slate-50/50" data-ordem="' + ord + '">'
-    +   '<input type="hidden" name="veiculos_ordens[]" value="' + ord + '">'
-    +   '<div class="flex items-center justify-between"><h3 class="text-sm font-bold text-slate-800">Veículo ' + ord + '</h3><button type="button" class="btn-remover-veiculo text-rose-600 hover:underline text-xs font-semibold hidden">Remover</button></div>'
-    +   '<div class="grid gap-3 sm:grid-cols-6">'
-    +     '<div class="sm:col-span-3"><label class="block text-xs font-bold text-slate-600 mb-1">Placa *</label><div class="relative"><input name="placa_' + ord + '" maxlength="8" value="' + escapeHtml(dados.placa || '') + '" class="input-placa w-full rounded-lg border border-slate-300 px-3 py-2.5 uppercase font-semibold text-black"><span class="placa-status absolute right-3 top-2.5 text-xs text-slate-400"></span></div></div>'
-    +     '<div class="sm:col-span-3"><div class="grid grid-cols-2 gap-2 text-xs"><div class="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5"><div class="text-sky-700 font-medium">Lavagens neste mês</div><div class="text-lg font-bold text-sky-900 cont-mes">0</div></div><div class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5"><div class="text-indigo-700 font-medium">Total</div><div class="text-lg font-bold text-indigo-900 cont-total">0</div></div></div></div>'
-    +   '</div>'
-    +   '<details class="manual-box"><summary class="cursor-pointer text-xs text-slate-600 font-medium">Placa não encontrada? Dados manuais</summary><div class="mt-2 grid gap-2 sm:grid-cols-4"><div><input name="manual_marca_' + ord + '" placeholder="Marca" value="' + escapeHtml(dados.manual_marca || '') + '" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div><div><input name="manual_modelo_' + ord + '" placeholder="Modelo" value="' + escapeHtml(dados.manual_modelo || '') + '" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div><div><input name="manual_cor_' + ord + '" placeholder="Cor" value="' + escapeHtml(dados.manual_cor || '') + '" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div><div><input name="manual_ano_' + ord + '" placeholder="Ano" value="' + escapeHtml(dados.manual_ano || '') + '" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div></div></details>'
-    +   '<div class="pt-2 border-t border-slate-200 mt-2"><label class="block text-xs font-bold text-slate-600 mb-1">Serviços</label><div class="flex flex-wrap gap-2"><select class="sel-servico flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm">' + htmlServicosOpcoes() + '</select><button type="button" class="btn-add-servico rounded-lg bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 text-sm font-semibold whitespace-nowrap">+ Adicionar</button></div><div class="lista-servicos mt-2 rounded-lg border border-slate-200 divide-y divide-slate-100 bg-white empty:border-0">' + servicosPreenchidos + '</div></div>'
-    +   '<div class="pt-2 border-t border-slate-200"><label class="block text-xs font-bold text-slate-600 mb-1">Peças Utilizadas</label><div class="flex flex-wrap gap-2"><select class="sel-peca flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm">' + htmlPecasOpcoes() + '</select><button type="button" class="btn-add-peca rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 text-sm font-semibold whitespace-nowrap">+ Add Peça</button></div><div class="lista-pecas mt-2 rounded-lg border border-slate-200 divide-y divide-slate-100 bg-white empty:border-0">' + pecasPreenchidas + '</div></div>'
-    +   '<div class="text-right text-xs text-slate-500 font-semibold pt-2">Subtotal deste veículo: <span class="subtotal-veiculo text-slate-800 text-sm">' + brl(dados.subtotal || 0) + '</span></div>'
-    + '</div>';
-  }
-
-  function htmlServicoSelecionado(ord, id, nome, preco) { return '<div class="flex items-center gap-3 px-3 py-2" data-id="' + id + '" data-preco="' + preco + '"><input type="hidden" name="servicos_' + ord + '[]" value="' + id + '"><div class="flex-1 text-sm font-semibold text-slate-800">' + escapeHtml(nome) + '</div><div class="text-sm font-bold text-slate-800">' + brl(preco) + '</div><button type="button" class="btn-remover-servico text-rose-600 hover:underline text-xs">Remover</button></div>'; }
-  function htmlPecaSelecionada(ord, id, nome, qtd, preco, descCent) { var subtotal = (preco * qtd) - descCent; return '<div class="flex flex-col sm:flex-row items-start sm:items-center gap-2 px-3 py-2 bg-emerald-50/30 peca-row" data-id="' + id + '" data-preco="' + preco + '"><input type="hidden" name="pecas_' + ord + '[]" value="' + id + '"><div class="flex-1 text-sm font-semibold text-slate-800 w-full">' + escapeHtml(nome) + '</div><div class="flex items-center gap-1 text-xs"><span class="text-slate-500">Qtd:</span><input type="number" name="peca_qtd_' + ord + '[]" value="' + qtd + '" step="0.01" class="input-qtd-peca w-16 rounded border border-slate-300 px-2 py-1 text-center font-bold text-black"></div><div class="flex items-center gap-1 text-xs"><span class="text-slate-500">Desc:</span><span class="text-slate-400">R$</span><input type="text" name="peca_desc_' + ord + '[]" value="' + (descCent > 0 ? (descCent/100).toFixed(2).replace('.',',') : '') + '" placeholder="0,00" class="input-desc-peca w-16 rounded border border-slate-300 px-2 py-1 text-right font-semibold text-black"></div><div class="w-20 text-right text-sm font-bold text-emerald-700 subtotal-peca" data-total="' + subtotal + '">' + brl(subtotal) + '</div><button type="button" class="btn-remover-peca text-rose-600 hover:underline text-xs">Remover</button></div>'; }
-
-  function adicionarBloco(dados) { dados = dados || {}; var ord = proximaOrd++; var tmp = document.createElement('div'); tmp.innerHTML = htmlBlocoVeiculo(ord, dados).trim(); var bloco = tmp.firstElementChild; wrap.appendChild(bloco); atualizarNumeracao(); recalcularGeral(); if (dados.placa && dados.placa.length === 7) setTimeout(function () { consultarPlaca(bloco); }, 150); return bloco; }
-  function atualizarNumeracao() { var blocos = wrap.querySelectorAll('.veiculo-block'); blocos.forEach(function (b, i) { b.querySelector('h3').textContent = 'Veículo ' + (i + 1); var btn = b.querySelector('.btn-remover-veiculo'); if (blocos.length > 1) btn.classList.remove('hidden'); else btn.classList.add('hidden'); }); }
-
-  document.getElementById('btnAddVeiculo').addEventListener('click', function(e) { e.preventDefault(); adicionarBloco({ placa: '', itens: [], pecas: [] }); });
-  wrap.addEventListener('click', function (e) {
-    var t = e.target;
-    if (t.classList.contains('btn-remover-veiculo')) { var b = t.closest('.veiculo-block'); if (wrap.querySelectorAll('.veiculo-block').length <= 1) return; b.remove(); atualizarNumeracao(); recalcularGeral(); return; }
-    if (t.classList.contains('btn-add-servico')) { var b = t.closest('.veiculo-block'); var sel = b.querySelector('.sel-servico'); if (!sel.value) return; var opt = sel.options[sel.selectedIndex]; var lista = b.querySelector('.lista-servicos'); if (lista.querySelector('[data-id="'+sel.value+'"]')) { alert('Serviço já adicionado.'); return; } var tmp = document.createElement('div'); tmp.innerHTML = htmlServicoSelecionado(b.dataset.ordem, opt.value, opt.dataset.nome, parseInt(opt.dataset.preco)); lista.appendChild(tmp.firstElementChild); sel.value = ''; sel.focus(); recalcularGeral(); return; }
-    if (t.classList.contains('btn-add-peca')) { var b = t.closest('.veiculo-block'); var sel = b.querySelector('.sel-peca'); if (!sel.value) return; var opt = sel.options[sel.selectedIndex]; var lista = b.querySelector('.lista-pecas'); if (lista.querySelector('[data-id="'+sel.value+'"]')) { alert('Peça já adicionada. Altere a quantidade.'); return; } var tmp = document.createElement('div'); tmp.innerHTML = htmlPecaSelecionada(b.dataset.ordem, opt.value, opt.dataset.nome, 1, parseInt(opt.dataset.preco), 0); lista.appendChild(tmp.firstElementChild); sel.value = ''; sel.focus(); recalcularGeral(); return; }
-    if (t.classList.contains('btn-remover-servico')) { t.closest('[data-id]').remove(); recalcularGeral(); return; }
-    if (t.classList.contains('btn-remover-peca')) { t.closest('[data-id]').remove(); recalcularGeral(); return; }
-  });
-
-  wrap.addEventListener('input', function(e) {
-    if (e.target.classList.contains('input-qtd-peca') || e.target.classList.contains('input-desc-peca')) {
-      var row = e.target.closest('.peca-row'); var preco = parseInt(row.dataset.preco); var qtd = parseFloat(row.querySelector('.input-qtd-peca').value) || 0; var descStr = row.querySelector('.input-desc-peca').value; var descCent = 0;
-      if (descStr.includes(',')) { var p = descStr.split(','); descCent = (parseInt(p[0].replace(/\D/g, ''))||0) * 100 + (parseInt((p[1]+'00').slice(0,2))||0); } else { descCent = (parseInt(descStr.replace(/\D/g, ''))||0) * 100; }
-      var subtotal = (preco * qtd) - descCent; if (subtotal < 0) subtotal = 0;
-      row.querySelector('.subtotal-peca').textContent = brl(subtotal); recalcularGeral();
+  // FUNÇÃO GLOBAL PARA ABRIR O MODAL
+  function abrirModal(btn, inputId, valorComissao) {
+    if (valorComissao <= 0) {
+        alert('Atenção: O valor desta comissão está zerado no cadastro do serviço.\n\nVá em "Lavagens", edite este serviço e informe um valor de comissão para que o funcionário receba.');
     }
+    btnAlvo = btn;
+    inputAlvo = document.getElementById(inputId);
+    var sel = inputAlvo.value.split(',').filter(Boolean);
+    
+    var listaEq = document.getElementById('listaEquipe');
+    listaEq.innerHTML = '';
+    USUARIOS.forEach(function(u) {
+      var check = sel.includes(String(u.id)) ? 'checked' : '';
+      var html = '<label class="flex items-center gap-3 cursor-pointer p-2 hover:bg-slate-50 rounded">'
+               + '<input type="checkbox" value="' + u.id + '" ' + check + ' class="w-4 h-4 text-brand-500 rounded border-slate-300">'
+               + '<span class="text-sm font-semibold text-slate-700">' + escapeHtml(u.nome) + '</span>'
+               + '</label>';
+      listaEq.insertAdjacentHTML('beforeend', html);
+    });
+    document.getElementById('modalEquipe').classList.remove('hidden');
+  }
+
+  // FUNÇÃO GLOBAL PARA SALVAR A EQUIPE
+  function salvarEquipe() {
+    var sel = [];
+    document.getElementById('listaEquipe').querySelectorAll('input:checked').forEach(function(c) { sel.push(c.value); });
+    if (inputAlvo && btnAlvo) {
+      inputAlvo.value = sel.join(',');
+      btnAlvo.innerHTML = sel.length > 0 ? '👤 Equipe Definida' : '👤 Quem fez?';
+      btnAlvo.className = sel.length > 0 ? 'btn-equipe bg-emerald-100 text-emerald-700 px-2 py-1 rounded text-[11px] font-bold ml-2 whitespace-nowrap' : 'btn-equipe bg-slate-100 text-slate-600 px-2 py-1 rounded text-[11px] font-bold ml-2 whitespace-nowrap';
+    }
+    document.getElementById('modalEquipe').classList.add('hidden');
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.btn-fechar-eq').forEach(function(el) {
+      el.addEventListener('click', function() { document.getElementById('modalEquipe').classList.add('hidden'); });
+    });
+
+    var inputNome = document.getElementById('cliente_nome');
+    var inputCel  = document.getElementById('cliente_celular');
+    var hiddenCli = document.getElementById('cliente_id');
+    
+    if (inputCel) { 
+        var aplicarCel = function () { inputCel.value = String(inputCel.value||'').replace(/\D+/g,'').slice(0,11); if(inputCel.value.length>2) inputCel.value = '(' + inputCel.value.slice(0,2) + ') ' + inputCel.value.slice(2); }; 
+        inputCel.addEventListener('input', aplicarCel); inputCel.addEventListener('blur', aplicarCel); aplicarCel(); 
+    }
+    
+    function vincularCliente() {
+      var val = inputNome.value.trim(); var achou = null;
+      document.getElementById('listaClientes').querySelectorAll('option').forEach(function (o) { if (o.dataset.nome === val) achou = o; });
+      if (achou) { hiddenCli.value = achou.dataset.id; if (!inputCel.value.trim() && achou.dataset.celular) { inputCel.value = achou.dataset.celular; inputCel.dispatchEvent(new Event('input')); } } else { hiddenCli.value = 0; }
+    }
+    inputNome.addEventListener('input', vincularCliente); inputNome.addEventListener('change', vincularCliente);
+
+    var wrap = document.getElementById('veiculosWrap');
+    var proximaOrd = 1;
+
+    function htmlServicosOpcoes() { var html = '<option value="">Selecione um serviço...</option>'; SERVICOS.forEach(function (s) { html += '<option value="' + s.id + '" data-preco="' + s.preco + '" data-nome="' + escapeHtml(s.nome) + '" data-paga="' + s.paga + '">' + escapeHtml(s.nome) + ' — ' + brl(s.preco) + '</option>'; }); return html; }
+    function htmlPecasOpcoes() { var html = '<option value="">Selecione uma peça...</option>'; ESTOQUE.forEach(function (p) { var aviso = p.qtd <= 2 ? ' ⚠️ (Apenas ' + p.qtd + ')' : ''; html += '<option value="' + p.id + '" data-preco="' + p.preco + '" data-nome="' + escapeHtml(p.nome) + '">' + escapeHtml(p.nome) + ' — ' + brl(p.preco) + aviso + '</option>'; }); return html; }
+
+    function htmlBlocoVeiculo(ord, dados) {
+      dados = dados || {};
+      var servicosPreenchidos = ''; if (dados.itens) { dados.itens.forEach(function (it) { 
+          var sv = SERVICOS.find(x=>x.id == it.lavagem_id) || {paga:0, comissao:0};
+          servicosPreenchidos += htmlServicoSelecionado(ord, it.lavagem_id, it.nome, parseInt(it.preco_centavos, 10), sv.paga, it.equipe || '', sv.comissao); 
+      }); }
+      var pecasPreenchidas = ''; if (dados.pecas) { dados.pecas.forEach(function (p) { pecasPreenchidas += htmlPecaSelecionada(ord, p.id, p.nome, p.qtd, parseInt(p.preco_centavos, 10), parseInt(p.desconto_centavos, 10)); }); }
+
+      return ''
+      + '<div class="veiculo-block border border-slate-200 rounded-xl p-4 space-y-4 bg-slate-50/50" data-ordem="' + ord + '">'
+      +   '<input type="hidden" name="veiculos_ordens[]" value="' + ord + '">'
+      +   '<div class="flex items-center justify-between"><h3 class="text-sm font-bold text-slate-800">Veículo ' + ord + '</h3><button type="button" class="btn-remover-veiculo text-rose-600 hover:underline text-xs font-semibold hidden">Remover</button></div>'
+      +   '<div class="grid gap-3 sm:grid-cols-6">'
+      +     '<div class="sm:col-span-3"><label class="block text-xs font-bold text-slate-600 mb-1">Placa *</label><div class="relative"><input name="placa_' + ord + '" maxlength="8" value="' + escapeHtml(dados.placa || '') + '" class="input-placa w-full rounded-lg border border-slate-300 px-3 py-2.5 uppercase font-semibold text-black"><span class="placa-status absolute right-3 top-2.5 text-xs text-slate-400"></span></div></div>'
+      +     '<div class="sm:col-span-3"><div class="grid grid-cols-2 gap-2 text-xs"><div class="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5"><div class="text-sky-700 font-medium">Lavagens neste mês</div><div class="text-lg font-bold text-sky-900 cont-mes">0</div></div><div class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5"><div class="text-indigo-700 font-medium">Total</div><div class="text-lg font-bold text-indigo-900 cont-total">0</div></div></div></div>'
+      +   '</div>'
+      +   '<div class="grid gap-3 sm:grid-cols-6">'
+      +     '<div class="sm:col-span-3"><label class="block text-xs font-bold text-slate-600 mb-1">Modelo</label><input name="manual_modelo_' + ord + '" value="' + escapeHtml(dados.manual_modelo || '') + '" class="input-modelo w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-semibold text-black" placeholder="Ex: Fiat Uno"></div>'
+      +     '<div class="sm:col-span-3"><label class="block text-xs font-bold text-slate-600 mb-1">Cor</label><input name="manual_cor_' + ord + '" value="' + escapeHtml(dados.manual_cor || '') + '" class="input-cor w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-semibold text-black" placeholder="Ex: Prata"></div>'
+      +   '</div>'
+      +   '<details class="manual-box"><summary class="cursor-pointer text-xs text-slate-600 font-medium">Placa não encontrada? Adicionar Marca e Ano manualmente</summary><div class="mt-2 grid gap-2 sm:grid-cols-4"><div class="sm:col-span-2"><input name="manual_marca_' + ord + '" placeholder="Marca" value="' + escapeHtml(dados.manual_marca || '') + '" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div><div class="sm:col-span-2"><input name="manual_ano_' + ord + '" placeholder="Ano" value="' + escapeHtml(dados.manual_ano || '') + '" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></div></div></details>'
+      +   '<div class="pt-2 border-t border-slate-200 mt-2"><label class="block text-xs font-bold text-slate-600 mb-1">Serviços</label><div class="flex flex-wrap gap-2"><select class="sel-servico flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm">' + htmlServicosOpcoes() + '</select><button type="button" class="btn-add-servico rounded-lg bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 text-sm font-semibold whitespace-nowrap">+ Adicionar</button></div><div class="lista-servicos mt-2 rounded-lg border border-slate-200 divide-y divide-slate-100 bg-white empty:border-0">' + servicosPreenchidos + '</div></div>'
+      +   '<div class="pt-2 border-t border-slate-200"><label class="block text-xs font-bold text-slate-600 mb-1">Peças Utilizadas</label><div class="flex flex-wrap gap-2"><select class="sel-peca flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm">' + htmlPecasOpcoes() + '</select><button type="button" class="btn-add-peca rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 text-sm font-semibold whitespace-nowrap">+ Add Peça</button></div><div class="lista-pecas mt-2 rounded-lg border border-slate-200 divide-y divide-slate-100 bg-white empty:border-0">' + pecasPreenchidas + '</div></div>'
+      +   '<div class="text-right text-xs text-slate-500 font-semibold pt-2">Subtotal deste veículo: <span class="subtotal-veiculo text-slate-800 text-sm">' + brl(dados.subtotal || 0) + '</span></div>'
+      + '</div>';
+    }
+
+    function htmlServicoSelecionado(ord, id, nome, preco, pagaComissao, equipeIds, valorComissao) {
+      var btnEq = '';
+      if (pagaComissao) {
+          var texto = equipeIds ? '👤 Equipe Definida' : '👤 Quem fez?';
+          var classe = equipeIds ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600';
+          // Passa o valor da comissão para checar se está zerado
+          btnEq = '<button type="button" onclick="abrirModal(this, \'equipe_' + ord + '_' + id + '\', ' + valorComissao + ')" class="btn-equipe ' + classe + ' px-2 py-1 rounded text-[11px] font-bold ml-2 whitespace-nowrap">' + texto + '</button>';
+      }
+      return '<div class="flex flex-col sm:flex-row items-start sm:items-center gap-3 px-3 py-2" data-id="' + id + '" data-preco="' + preco + '">'
+      + '<input type="hidden" name="servicos_' + ord + '[]" value="' + id + '">'
+      + '<input type="hidden" name="servico_equipe_' + ord + '[' + id + ']" id="equipe_' + ord + '_' + id + '" value="' + equipeIds + '">'
+      + '<div class="flex-1 text-sm font-semibold text-slate-800 flex items-center justify-between w-full">' + escapeHtml(nome) + btnEq + '</div>'
+      + '<div class="text-sm font-bold text-slate-800">' + brl(preco) + '</div>'
+      + '<button type="button" class="btn-remover-servico text-rose-600 hover:underline text-xs">Remover</button></div>';
+    }
+
+    function htmlPecaSelecionada(ord, id, nome, qtd, preco, descCent) { var subtotal = (preco * qtd) - descCent; return '<div class="flex flex-col sm:flex-row items-start sm:items-center gap-2 px-3 py-2 bg-emerald-50/30 peca-row" data-id="' + id + '" data-preco="' + preco + '"><input type="hidden" name="pecas_' + ord + '[]" value="' + id + '"><div class="flex-1 text-sm font-semibold text-slate-800 w-full">' + escapeHtml(nome) + '</div><div class="flex items-center gap-1 text-xs"><span class="text-slate-500">Qtd:</span><input type="number" name="peca_qtd_' + ord + '[]" value="' + qtd + '" step="0.01" class="input-qtd-peca w-16 rounded border border-slate-300 px-2 py-1 text-center font-bold text-black"></div><div class="flex items-center gap-1 text-xs"><span class="text-slate-500">Desc:</span><span class="text-slate-400">R$</span><input type="text" name="peca_desc_' + ord + '[]" value="' + (descCent > 0 ? (descCent/100).toFixed(2).replace('.',',') : '') + '" placeholder="0,00" class="input-desc-peca w-16 rounded border border-slate-300 px-2 py-1 text-right font-semibold text-black"></div><div class="w-20 text-right text-sm font-bold text-emerald-700 subtotal-peca" data-total="' + subtotal + '">' + brl(subtotal) + '</div><button type="button" class="btn-remover-peca text-rose-600 hover:underline text-xs">Remover</button></div>'; }
+
+    function adicionarBloco(dados) { dados = dados || {}; var ord = proximaOrd++; var tmp = document.createElement('div'); tmp.innerHTML = htmlBlocoVeiculo(ord, dados).trim(); var bloco = tmp.firstElementChild; wrap.appendChild(bloco); atualizarNumeracao(); recalcularGeral(); if (dados.placa && dados.placa.length === 7) setTimeout(function () { consultarPlaca(bloco); }, 150); return bloco; }
+    function atualizarNumeracao() { var blocos = wrap.querySelectorAll('.veiculo-block'); blocos.forEach(function (b, i) { b.querySelector('h3').textContent = 'Veículo ' + (i + 1); var btn = b.querySelector('.btn-remover-veiculo'); if (blocos.length > 1) btn.classList.remove('hidden'); else btn.classList.add('hidden'); }); }
+
+    wrap.addEventListener('click', function (e) {
+      var t = e.target;
+
+      if (t.closest('.btn-remover-veiculo')) { 
+        var b = t.closest('.veiculo-block'); 
+        if (wrap.querySelectorAll('.veiculo-block').length <= 1) return; 
+        b.remove(); 
+        atualizarNumeracao(); 
+        recalcularGeral(); 
+        return; 
+      }
+
+      if (t.closest('.btn-add-servico')) { 
+        var b = t.closest('.veiculo-block'); 
+        var sel = b.querySelector('.sel-servico'); 
+        if (!sel.value) return; 
+        var opt = sel.options[sel.selectedIndex]; 
+        var lista = b.querySelector('.lista-servicos'); 
+        if (lista.querySelector('[data-id="'+sel.value+'"]')) { alert('Serviço já adicionado.'); return; }
+        var tmp = document.createElement('div'); 
+        var sv = SERVICOS.find(x=>x.id == opt.value) || {comissao:0};
+        tmp.innerHTML = htmlServicoSelecionado(b.dataset.ordem, opt.value, opt.dataset.nome, parseInt(opt.dataset.preco), parseInt(opt.dataset.paga), '', sv.comissao); 
+        lista.appendChild(tmp.firstElementChild); 
+        sel.value = ''; 
+        sel.focus(); 
+        recalcularGeral(); 
+        return; 
+      }
+
+      if (t.closest('.btn-add-peca')) { 
+        var b = t.closest('.veiculo-block'); 
+        var sel = b.querySelector('.sel-peca'); 
+        if (!sel.value) return; 
+        var opt = sel.options[sel.selectedIndex]; 
+        var lista = b.querySelector('.lista-pecas'); 
+        if (lista.querySelector('[data-id="'+sel.value+'"]')) { alert('Peça já adicionada. Altere a quantidade.'); return; } 
+        var tmp = document.createElement('div'); 
+        tmp.innerHTML = htmlPecaSelecionada(b.dataset.ordem, opt.value, opt.dataset.nome, 1, parseInt(opt.dataset.preco), 0); 
+        lista.appendChild(tmp.firstElementChild); 
+        sel.value = ''; 
+        sel.focus(); 
+        recalcularGeral(); 
+        return; 
+      }
+
+      if (t.closest('.btn-remover-servico')) { 
+        t.closest('[data-id]').remove(); 
+        recalcularGeral(); 
+        return; 
+      }
+
+      if (t.closest('.btn-remover-peca')) { 
+        t.closest('[data-id]').remove(); 
+        recalcularGeral(); 
+        return; 
+      }
+    });
+
+    wrap.addEventListener('input', function(e) {
+      if (e.target.classList.contains('input-qtd-peca') || e.target.classList.contains('input-desc-peca')) {
+        var row = e.target.closest('.peca-row'); var preco = parseInt(row.dataset.preco); var qtd = parseFloat(row.querySelector('.input-qtd-peca').value) || 0; var descStr = row.querySelector('.input-desc-peca').value; var descCent = 0;
+        if (descStr.includes(',')) { var p = descStr.split(','); descCent = (parseInt(p[0].replace(/\D/g, ''))||0) * 100 + (parseInt((p[1]+'00').slice(0,2))||0); } else { descCent = (parseInt(descStr.replace(/\D/g, ''))||0) * 100; }
+        var subtotal = (preco * qtd) - descCent; if (subtotal < 0) subtotal = 0;
+        row.querySelector('.subtotal-peca').textContent = brl(subtotal); recalcularGeral();
+      }
+    });
+
+    var descInput = document.getElementById('desconto'); var tipoDesc = document.getElementById('desconto_tipo');
+    tipoDesc.addEventListener('change', function() { descInput.value = (tipoDesc.value === 'percentual') ? '0' : ''; recalcularGeral(); });
+    descInput.addEventListener('input', function() { if (tipoDesc.value === 'percentual') descInput.value = soDigitos(descInput.value).slice(0, 3); else descInput.value = descInput.value.replace(/[^\d.,]/g, ''); recalcularGeral(); });
+    descInput.addEventListener('blur', function() { if (tipoDesc.value === 'percentual') descInput.value = String(Math.min(100, parseInt(soDigitos(descInput.value)||'0'))); else descInput.value = formatarMoedaBR(descInput.value); recalcularGeral(); });
+
+    function recalcularGeral() {
+      var subGeral = 0;
+      wrap.querySelectorAll('.veiculo-block').forEach(function(b) { var subV = 0; b.querySelectorAll('.lista-servicos [data-preco]').forEach(function(el) { subV += parseInt(el.dataset.preco)||0; }); b.querySelectorAll('.subtotal-peca').forEach(function(el) { subV += parseInt(el.dataset.total)||0; }); b.querySelector('.subtotal-veiculo').textContent = brl(subV); subGeral += subV; });
+      var desc = 0;
+      if (tipoDesc.value === 'percentual') { var p = Math.max(0, Math.min(100, parseInt(soDigitos(descInput.value))||0)); desc = Math.round(subGeral * p / 100); } 
+      else { var pStr = descInput.value; if (pStr.includes(',')) { var p = pStr.split(','); desc = ((parseInt(p[0].replace(/\D/g,''))||0)*100) + (parseInt((p[1]+'00').slice(0,2))||0); } else { desc = (parseInt(pStr.replace(/\D/g,''))||0)*100; } if (desc > subGeral) desc = subGeral; }
+      document.getElementById('subtotalView').textContent = brl(subGeral); document.getElementById('descView').textContent = '- ' + brl(desc); document.getElementById('totalView').textContent = brl(Math.max(0, subGeral - desc));
+    }
+
+    function consultarPlaca(bloco) {
+      var input = bloco.querySelector('.input-placa'); if (!input) return; var status = bloco.querySelector('.placa-status'); status.textContent = '...';
+      fetch('consultar_placa.php?placa=' + encodeURIComponent(input.value)).then(r=>r.json()).then(d => { 
+          if (d.contadores) { bloco.querySelector('.cont-mes').textContent = d.contadores.mes; bloco.querySelector('.cont-total').textContent = d.contadores.total; } 
+          if (d.ok) { 
+              status.textContent = '✓'; status.className='placa-status absolute right-3 top-2.5 text-xs text-emerald-600'; 
+              var inputModelo = bloco.querySelector('.input-modelo'); var inputCor = bloco.querySelector('.input-cor');
+              if (inputModelo && d.dados.modelo) inputModelo.value = d.dados.modelo;
+              if (inputCor && d.dados.cor) inputCor.value = d.dados.cor;
+          } else { 
+              status.textContent = '!'; status.className='placa-status absolute right-3 top-2.5 text-xs text-amber-600'; bloco.querySelector('.manual-box').open = true; 
+          } 
+      }).catch(()=>{ 
+          status.textContent = '!'; status.className='placa-status absolute right-3 top-2.5 text-xs text-amber-600'; bloco.querySelector('.manual-box').open = true; 
+      });
+    }
+    wrap.addEventListener('input', function(e) { if (e.target.classList.contains('input-placa')) { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7); var b = e.target.closest('.veiculo-block'); clearTimeout(b.__timer); if (e.target.value.length === 7) b.__timer = setTimeout(()=>consultarPlaca(b), 350); } });
+
+    if (VEICULOS_INICIAIS.length) VEICULOS_INICIAIS.forEach(v => adicionarBloco(v)); else adicionarBloco({ placa: '', itens: [], pecas: [] });
   });
-
-  var descInput = document.getElementById('desconto'); var tipoDesc = document.getElementById('desconto_tipo');
-  tipoDesc.addEventListener('change', function() { descInput.value = (tipoDesc.value === 'percentual') ? '0' : ''; recalcularGeral(); });
-  descInput.addEventListener('input', function() { if (tipoDesc.value === 'percentual') descInput.value = soDigitos(descInput.value).slice(0, 3); else descInput.value = descInput.value.replace(/[^\d.,]/g, ''); recalcularGeral(); });
-  descInput.addEventListener('blur', function() { if (tipoDesc.value === 'percentual') descInput.value = String(Math.min(100, parseInt(soDigitos(descInput.value)||'0'))); else descInput.value = formatarMoedaBR(descInput.value); recalcularGeral(); });
-
-  function recalcularGeral() {
-    var subGeral = 0;
-    wrap.querySelectorAll('.veiculo-block').forEach(function(b) { var subV = 0; b.querySelectorAll('.lista-servicos [data-preco]').forEach(function(el) { subV += parseInt(el.dataset.preco)||0; }); b.querySelectorAll('.subtotal-peca').forEach(function(el) { subV += parseInt(el.dataset.total)||0; }); b.querySelector('.subtotal-veiculo').textContent = brl(subV); subGeral += subV; });
-    var desc = 0;
-    if (tipoDesc.value === 'percentual') { var p = Math.max(0, Math.min(100, parseInt(soDigitos(descInput.value))||0)); desc = Math.round(subGeral * p / 100); } 
-    else { var pStr = descInput.value; if (pStr.includes(',')) { var p = pStr.split(','); desc = ((parseInt(p[0].replace(/\D/g,''))||0)*100) + (parseInt((p[1]+'00').slice(0,2))||0); } else { desc = (parseInt(pStr.replace(/\D/g,''))||0)*100; } if (desc > subGeral) desc = subGeral; }
-    document.getElementById('subtotalView').textContent = brl(subGeral); document.getElementById('descView').textContent = '- ' + brl(desc); document.getElementById('totalView').textContent = brl(Math.max(0, subGeral - desc));
-  }
-
-  function consultarPlaca(bloco) {
-    var input = bloco.querySelector('.input-placa'); if (!input) return; var status = bloco.querySelector('.placa-status'); status.textContent = '...';
-    fetch('consultar_placa.php?placa=' + encodeURIComponent(input.value)).then(r=>r.json()).then(d => { if (d.contadores) { bloco.querySelector('.cont-mes').textContent = d.contadores.mes; bloco.querySelector('.cont-total').textContent = d.contadores.total; } if (d.ok) { status.textContent = '✓'; status.className='placa-status absolute right-3 top-2.5 text-xs text-emerald-600'; } else { status.textContent = '!'; status.className='placa-status absolute right-3 top-2.5 text-xs text-amber-600'; bloco.querySelector('.manual-box').open = true; } }).catch(()=>{ status.textContent = '!'; status.className='placa-status absolute right-3 top-2.5 text-xs text-amber-600'; bloco.querySelector('.manual-box').open = true; });
-  }
-  wrap.addEventListener('input', function(e) { if (e.target.classList.contains('input-placa')) { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7); var b = e.target.closest('.veiculo-block'); clearTimeout(b.__timer); if (e.target.value.length === 7) b.__timer = setTimeout(()=>consultarPlaca(b), 350); } });
-
-  if (VEICULOS_INICIAIS.length) VEICULOS_INICIAIS.forEach(v => adicionarBloco(v)); else adicionarBloco({ placa: '', itens: [], pecas: [] });
-})();
 </script>
 
 <?php require __DIR__ . '/footer.php'; ?>

@@ -1,8 +1,8 @@
 <?php
 require_once __DIR__ . '/config.php';
 exigir_login();
-exigir_permissao('estoque');
 ensure_estoque();
+ensure_fornecedores(); // Necessário para carregar a lista de fornecedores
 
 /* ---------- Registrar Entrada Manual ---------- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'entrada') {
@@ -36,6 +36,9 @@ $stmt = db()->prepare("SELECT * FROM estoque_itens $where ORDER BY nome COLLATE 
 $stmt->execute($params);
 $itens = $stmt->fetchAll();
 
+// Busca fornecedores ativos em ordem alfabética
+$fornecedores = db()->query("SELECT nome FROM fornecedores WHERE ativo = 1 ORDER BY nome COLLATE NOCASE")->fetchAll();
+
 $titulo = 'Estoque de Peças';
 require __DIR__ . '/header.php';
 ?>
@@ -53,13 +56,17 @@ require __DIR__ . '/header.php';
         <button class="rounded-r-lg bg-slate-800 hover:bg-slate-700 text-white px-4 text-sm font-semibold">Buscar</button>
       </form>
       
+      <a href="estoque_relatorio.php" class="rounded-lg bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 text-sm font-semibold shadow-sm">
+        Relatório
+      </a>
+
+      <a href="estoque_inventario.php" class="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 text-sm font-semibold shadow-sm">
+        Inventário
+      </a>
+
       <a href="estoque_xml.php" class="rounded-lg bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 text-sm font-semibold shadow-sm flex items-center gap-2">
         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
         Importar XML
-      </a>
-
-      <a href="estoque_relatorio.php" class="rounded-lg bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 text-sm font-semibold shadow-sm">
-    Relatório
       </a>
       
       <a href="estoque_form.php" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 text-sm font-semibold whitespace-nowrap shadow-sm">
@@ -105,7 +112,6 @@ require __DIR__ . '/header.php';
             <?php endif; ?>
           </td>
           <td class="px-4 py-3 text-right whitespace-nowrap">
-            <!-- Botão de ENTRADA -->
             <button type="button" 
                     class="btn-entrada text-emerald-600 hover:underline text-xs font-bold mr-3"
                     data-id="<?= (int)$i['id'] ?>"
@@ -156,8 +162,15 @@ require __DIR__ . '/header.php';
 
         <div>
           <label class="block text-sm font-bold text-slate-700 mb-1.5">Observação</label>
-          <input name="observacao" maxlength="100"
+          <!-- Input com Datalist para trazer a lista de fornecedores -->
+          <input name="observacao" list="listaFornecedores" maxlength="100"
                  class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black focus:outline-none focus:ring-2 focus:ring-brand-400" placeholder="Ex: Compra fornecedor X">
+          
+          <datalist id="listaFornecedores">
+            <?php foreach ($fornecedores as $f): ?>
+              <option value="<?= e($f['nome']) ?>"></option>
+            <?php endforeach; ?>
+          </datalist>
         </div>
       </div>
 

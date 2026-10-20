@@ -246,6 +246,13 @@ tailwind.config = {
            ], $atual) ?>">Pagamentos</a>
       <?php endif; ?>
 
+      
+
+      <!-- ADICIONE ESTE BLOCO -->
+      <?php if (function_exists('tem_permissao') && tem_permissao('comissoes')): ?>
+        <a href="comissoes.php" class="<?= menu_cls('comissoes.php', [], $atual) ?>">Comissões</a>
+      <?php endif; ?>
+
       <?php if (function_exists('tem_permissao') && tem_permissao('administrativo')): ?>
         <a href="administrativo.php" class="<?= menu_cls('administrativo.php', [], $atual) ?>">Administrativo</a>
       <?php endif; ?>

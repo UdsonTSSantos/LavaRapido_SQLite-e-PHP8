@@ -1,8 +1,8 @@
 <?php
 require_once __DIR__ . '/config.php';
 $admin = exigir_admin();
-ensure_permissoes_coluna();
 ensure_usuarios();
+ensure_permissoes_coluna(); // Garante que a coluna permissoes existe
 
 $id      = (int)($_GET['id'] ?? 0);
 $editar  = $id > 0;
@@ -24,11 +24,6 @@ $dados = $usuario ?? [
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $permissoesSelecionadas = array_map('strval', (array)($_POST['permissoes'] ?? []));
-    $permissoesJSON = json_encode(
-      array_values(array_intersect($permissoesSelecionadas, array_keys(modulos_sistema()))),
-      JSON_UNESCAPED_UNICODE
-    );
     csrf_validar();
 
     $dados = [
@@ -37,6 +32,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'cpf'     => preg_replace('/\D/', '', (string)($_POST['cpf'] ?? '')),
         'celular' => preg_replace('/\D/', '', (string)($_POST['celular'] ?? '')),
     ];
+    
+    // Processa as permissões selecionadas (apenas para usuários comuns)
+    $permissoesSelecionadas = array_map('strval', (array)($_POST['permissoes'] ?? []));
+    $permissoesJSON = json_encode(
+        array_values(array_intersect($permissoesSelecionadas, array_keys(modulos_sistema()))),
+        JSON_UNESCAPED_UNICODE
+    );
 
     /* ---------- Validações ---------- */
     if ($dados['nome'] === '')                             $erros[] = 'Informe o nome.';
@@ -55,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     /* ---------- Salvar ---------- */
     if (!$erros) {
         if ($editar) {
-            /* Atualização: NÃO altera senha */
+            // Atualização: A query agora tem exatamente 5 parâmetros
             db()->prepare("
                 UPDATE usuarios SET
                     nome = :nome,
@@ -65,37 +67,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     permissoes = :permissoes
                 WHERE id = :id
             ")->execute([
-                ':nome'    => $dados['nome'],
-                ':email'   => $dados['email'],
-                ':cpf'     => $dados['cpf'],
-                ':celular' => $dados['celular'],
+                ':nome'       => $dados['nome'],
+                ':email'      => $dados['email'],
+                ':cpf'        => $dados['cpf'],
+                ':celular'    => $dados['celular'],
                 ':permissoes' => $permissoesJSON,
-                ':id'      => $id,
+                ':id'         => $id,
             ]);
 
             flash('Usuário atualizado com sucesso.', 'sucesso');
             header('Location: usuarios.php');
             exit;
         } else {
-            /* Criação: gera senha temporária */
+            // Criação: A senha é gerada automaticamente
             $senhaTemp = gerar_senha_temporaria(10);
 
             db()->prepare("
                 INSERT INTO usuarios
                     (email, senha_hash, is_admin, precisa_trocar_senha,
-                     nome, cpf, celular)
-                VALUES (?, ?, 0, 1, ?, ?, ?)
+                     nome, cpf, celular, permissoes)
+                VALUES (?, ?, 0, 1, ?, ?, ?, ?)
             ")->execute([
                 $dados['email'],
                 password_hash($senhaTemp, PASSWORD_DEFAULT),
                 $dados['nome'],
                 $dados['cpf'],
                 $dados['celular'],
-                $permissoesJSON,
+                $permissoesJSON
             ]);
             $novoId = (int)db()->lastInsertId();
 
-            /* Guarda os dados na sessão para exibir na próxima página */
+            /* Guarda os dados na sessão para exibir a senha na próxima página */
             $_SESSION['senha_gerada'] = [
                 'id'      => $novoId,
                 'nome'    => $dados['nome'],
@@ -134,6 +136,8 @@ require __DIR__ . '/header.php';
       return v;
     }
   };
+  window.Mask = Mask;
+
   document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('[data-mask]').forEach(el => {
       const fn = Mask[el.dataset.mask];
@@ -148,19 +152,19 @@ require __DIR__ . '/header.php';
 </script>
 
 <div class="max-w-3xl mx-auto">
-  <form method="post" class="bg-white rounded-xl shadow p-6 sm:p-8 space-y-6" novalidate>
+  <form method="post" class="bg-white rounded-2xl shadow-card border border-slate-200 p-6 sm:p-8 space-y-6" novalidate>
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
 
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-semibold"><?= $editar ? 'Editar usuário' : 'Novo usuário' ?></h1>
+        <h1 class="text-2xl font-bold text-slate-900"><?= $editar ? 'Editar usuário' : 'Novo usuário' ?></h1>
         <p class="text-sm text-slate-500">
           <?= $editar
                 ? 'Altere os dados do usuário.'
                 : 'A senha será gerada automaticamente após salvar.' ?>
         </p>
       </div>
-      <a href="usuarios.php" class="text-sm text-sky-600 hover:underline">← Voltar</a>
+      <a href="usuarios.php" class="text-sm text-brand-600 hover:underline font-semibold">← Voltar</a>
     </div>
 
     <?php if (!$editar): ?>
@@ -179,7 +183,7 @@ require __DIR__ . '/header.php';
     <?php endif; ?>
 
     <?php if ($erros): ?>
-      <div class="rounded-md border border-rose-200 bg-rose-50 text-rose-800 px-4 py-3 text-sm">
+      <div class="rounded-lg border border-rose-200 bg-rose-50 text-rose-800 px-4 py-3 text-sm font-semibold">
         <ul class="list-disc pl-5 space-y-1">
           <?php foreach ($erros as $err): ?><li><?= e($err) ?></li><?php endforeach; ?>
         </ul>
@@ -188,37 +192,36 @@ require __DIR__ . '/header.php';
 
     <section class="grid gap-4 sm:grid-cols-2">
       <div class="sm:col-span-2">
-        <label class="block text-sm font-medium mb-1">Nome *</label>
+        <label class="block text-sm font-bold text-slate-700 mb-1.5">Nome *</label>
         <input name="nome" required maxlength="120" value="<?= e($dados['nome']) ?>"
-               class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
+               class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black focus:outline-none focus:ring-2 focus:ring-brand-400">
       </div>
 
       <div class="sm:col-span-2">
-        <label class="block text-sm font-medium mb-1">E-mail *</label>
+        <label class="block text-sm font-bold text-slate-700 mb-1.5">E-mail *</label>
         <input type="email" name="email" required value="<?= e($dados['email']) ?>"
-               class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
+               class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black focus:outline-none focus:ring-2 focus:ring-brand-400">
       </div>
 
       <div>
-        <label class="block text-sm font-medium mb-1">CPF</label>
+        <label class="block text-sm font-bold text-slate-700 mb-1.5">CPF</label>
         <input name="cpf" data-mask="cpf" inputmode="numeric" maxlength="14"
                value="<?= e($dados['cpf'] ? formatar_cpf($dados['cpf']) : '') ?>"
                placeholder="000.000.000-00"
-               class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
+               class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black focus:outline-none focus:ring-2 focus:ring-brand-400">
       </div>
 
       <div>
-        <label class="block text-sm font-medium mb-1">Celular</label>
+        <label class="block text-sm font-bold text-slate-700 mb-1.5">Celular</label>
         <input name="celular" data-mask="celular" inputmode="numeric" maxlength="16"
                value="<?= e($dados['celular'] ? formatar_fone_usuario($dados['celular']) : '') ?>"
                placeholder="(00) 00000-0000"
-               class="w-full rounded-lg border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500">
+               class="w-full rounded-lg border border-slate-300 px-3 py-2.5 font-semibold text-black focus:outline-none focus:ring-2 focus:ring-brand-400">
         <p class="mt-1 text-xs text-slate-500">Usado para o envio da senha por WhatsApp.</p>
       </div>
+    </section>
 
-
-
-        <?php if (!$editar || (int)$dados['is_admin'] === 0): ?>
+    <?php if (!$editar || (int)$usuario['is_admin'] === 0): ?>
       <!-- ============ PERMISSÕES DE ACESSO ============ -->
       <section class="pt-4 border-t border-slate-200">
         <div class="flex items-center justify-between mb-3">
@@ -266,13 +269,12 @@ require __DIR__ . '/header.php';
           acesso a nenhum módulo, o dashboard mostra apenas a mensagem de boas-vindas.
         </p>
       </section>
-    <?php endif; ?>   
-    </section>
+    <?php endif; ?>
 
     <div class="flex justify-end gap-2 pt-2">
       <a href="usuarios.php"
-         class="px-4 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium">Cancelar</a>
-      <button class="px-5 py-2.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium">
+         class="px-4 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-semibold text-slate-700">Cancelar</a>
+      <button class="px-5 py-2.5 rounded-lg bg-brand-500 hover:bg-brand-700 text-white font-semibold shadow-sm">
         <?= $editar ? 'Salvar alterações' : 'Criar e gerar senha' ?>
       </button>
     </div>

@@ -100,17 +100,22 @@ tailwind.config = {
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
   }
 
-  /* Campos de input */
+  /* Campos de input (Ajustados para negrito, preto e maiores) */
   .login-input {
-    font-size: 1rem;
-    color: #1e293b;
+    font-size: 1.15rem;       /* Aumentado */
+    font-weight: 700;         /* Negrito forte */
+    color: #000000;           /* Preto puro */
     background: #ffffff;
-    border: 1px solid #e2e8f0;
+    border: 1.5px solid #cbd5e1;
     border-radius: 0.5rem;
     padding: 0.875rem 1rem;
     width: 100%;
     box-shadow: inset 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     transition: border-color .15s, box-shadow .15s;
+  }
+  .login-input::placeholder {
+    color: #94a3b8;
+    font-weight: 500;
   }
   .login-input:focus {
     outline: none;
@@ -173,7 +178,7 @@ tailwind.config = {
 
         <!-- Campo Senha -->
         <div>
-          <label for="senha" class="flex items-center gap-2 text-brand-800 font-semibold mb-1.5 text-[0.9rem]">
+          <label for="senha" class="flex items-center gap-2 text-brand-800 font-bold mb-1.5 text-[0.9rem]">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
@@ -222,7 +227,6 @@ tailwind.config = {
   </div>
 
   <!-- Rodapé Global -->
-  
   <div class="absolute bottom-6 w-full text-center z-20">
     <p class="text-[0.85rem] text-slate-700 font-medium">
       <span class="text-blue-600 font-extrabold text-lg tracking-tighter mr-1">AST7</span> 
