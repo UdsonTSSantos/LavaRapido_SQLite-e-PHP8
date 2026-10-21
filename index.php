@@ -16,26 +16,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($senha === '') {
         $erro = 'Informe a senha.';
     } else {
-        $r = autenticar($email, $senha);
+        // 1. Descobre a qual empresa (banco) esse e-mail pertence
+        $tenant = function_exists('descobrir_tenant_por_email') ? descobrir_tenant_por_email($email) : null;
 
-        if (!$r['ok']) {
-            $erro = $r['erro'] ?? 'Credenciais inválidas.';
+        if (function_exists('descobrir_tenant_por_email') && !$tenant) {
+            $erro = 'Credenciais inválidas.';
         } else {
-            $u = $r['usuario'];
-            if (defined('AUTH_MODE') && AUTH_MODE === 'api') {
-                $u = sincronizar_usuario_local($u);
+            // 2. "Chaveia" a sessão para apontar para o banco da empresa (se multi-tenant)
+            if (function_exists('definir_tenant') && $tenant) {
+                definir_tenant($tenant);
             }
-            session_regenerate_id(true);
-            $_SESSION['usuario_id'] = (int)$u['id'];
-            if (!empty($r['token'])) $_SESSION['api_token'] = $r['token'];
+            
+            // 3. Autentica no banco correto
+            $r = autenticar($email, $senha);
 
-            if (!empty($u['precisa_trocar_senha'])) {
-                flash('Primeiro acesso: é obrigatório definir uma nova senha.', 'info');
-                header('Location: trocar_senha.php');
+            if (!$r['ok']) {
+                if (function_exists('definir_tenant')) definir_tenant(null);
+                $erro = $r['erro'] ?? 'Credenciais inválidas.';
             } else {
-                header('Location: dashboard.php');
+                $u = $r['usuario'];
+                
+                session_regenerate_id(true);
+                if (function_exists('definir_tenant') && $tenant) {
+                    definir_tenant($tenant); // Restaura o tenant após regenerar a sessão
+                }
+                $_SESSION['usuario_id'] = (int)$u['id'];
+
+                if (!empty($u['precisa_trocar_senha'])) {
+                    flash('Primeiro acesso: é obrigatório definir uma nova senha.', 'info');
+                    header('Location: trocar_senha.php');
+                } else {
+                    // Redirecionamento Inteligente
+                    if ($u['is_admin']) {
+                        header('Location: dashboard.php');
+                    } else {
+                        header('Location: agendamentos.php');
+                    }
+                }
+                exit;
             }
-            exit;
         }
     }
 }
@@ -43,8 +62,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 try { $__emp = empresa(); $__logo = empresa_logo_url(); }
 catch (Throwable $e) { $__emp = []; $__logo = null; }
 
-$__nomeEmpresa = $__emp['nome_fantasia'] ?: ($__emp['razao_social'] ?: 'Sistema');
-$__celular     = $__emp['celular'] ?: ($__emp['telefone'] ?? '');
+$__nomeEmpresa = $__emp['nome_fantasia'] ?? '';
+if ($__nomeEmpresa === '') $__nomeEmpresa = $__emp['razao_social'] ?? '';
+if ($__nomeEmpresa === '') $__nomeEmpresa = 'Sistema';
+$__celular = $__emp['celular'] ?? ($__emp['telefone'] ?? '');
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR" class="h-full">
@@ -102,9 +123,9 @@ tailwind.config = {
 
   /* Campos de input (Ajustados para negrito, preto e maiores) */
   .login-input {
-    font-size: 1.15rem;       /* Aumentado */
-    font-weight: 700;         /* Negrito forte */
-    color: #000000;           /* Preto puro */
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #000000;
     background: #ffffff;
     border: 1.5px solid #cbd5e1;
     border-radius: 0.5rem;

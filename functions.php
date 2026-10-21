@@ -1350,3 +1350,31 @@ function sms_veiculo_pronto(array $entrada, ?array $empresa = null): string {
     $placa = formatar_placa($entrada['placa']);
     return "Ola! Seu veiculo {$placa} esta pronto para retirada em {$nome}. Obrigado!";
 }
+
+/* =========================================================
+ *  AGENDAMENTOS
+ * ========================================================= */
+function ensure_agendamentos(): void {
+    static $ok = false;
+    if ($ok) return;
+
+    $pdo = db();
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS agendamentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_nome TEXT NOT NULL DEFAULT '',
+            cliente_celular TEXT NOT NULL DEFAULT '',
+            placa TEXT NOT NULL DEFAULT '',
+            lavagem_id INTEGER NOT NULL,
+            data_agendamento TEXT NOT NULL,
+            hora_agendamento TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'agendado',
+            criado_por INTEGER,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    ");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_agend_data ON agendamentos(data_agendamento)");
+
+    $ok = true;
+}

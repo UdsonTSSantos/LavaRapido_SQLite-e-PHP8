@@ -22,7 +22,6 @@ $__nome = $__emp['nome_fantasia'] ?? '';
 if ($__nome === '') $__nome = $__emp['razao_social'] ?? '';
 if ($__nome === '') $__nome = 'Sistema';
 
-/* Nome do usuário logado + item de menu ativo */
 $nomeTopo = '';
 $atual    = basename($_SERVER['PHP_SELF'] ?? '');
 
@@ -36,7 +35,6 @@ if ($u) {
     } catch (Throwable $e) { /* ignora */ }
 }
 
-/** Helper: classe do link de menu conforme página atual */
 function menu_cls(string $href, array $arquivos, string $atual): string {
     $ativo = ($atual === $href) || in_array($atual, $arquivos, true);
     return $ativo
@@ -147,12 +145,6 @@ tailwind.config = {
     cursor: not-allowed;
   }
 
-  input[type="file"] {
-    font-size: .9375rem;
-    font-weight: 500;
-    color: #0f172a;
-  }
-
   input[type="checkbox"],
   input[type="radio"] {
     width: 1.15rem;
@@ -178,20 +170,12 @@ tailwind.config = {
     box-shadow: 0 1px 2px rgba(0,65,115,.15);
   }
   .btn-primary:hover { background-color: var(--brand-700); }
-  .btn-primary:active { transform: translateY(1px); }
 
   /* Scrollbar discreta */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: #f1f5f9; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
   ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-  /* Animação sutil */
-  @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(4px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  .fade-up { animation: fadeUp .25s ease-out; }
 </style>
 </head>
 <body class="h-full bg-slate-50 text-slate-800 antialiased">
@@ -202,7 +186,7 @@ tailwind.config = {
   <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
     
     <!-- Logo e Nome da Empresa -->
-    <a href="dashboard.php" class="flex items-center gap-3 font-bold tracking-tight text-lg">
+    <a href="<?= $u['is_admin'] ? 'dashboard.php' : 'agendamentos.php' ?>" class="flex items-center gap-3 font-bold tracking-tight text-lg">
       <?php if ($__logo): ?>
         <img src="<?= e($__logo) ?>" alt="Logo"
              class="h-9 w-9 object-contain bg-white/95 rounded-lg p-0.5 shadow-sm">
@@ -215,6 +199,11 @@ tailwind.config = {
       
       <!-- Dashboard (sempre visível) -->
       <a href="dashboard.php" class="<?= menu_cls('dashboard.php', ['dashboard_operacional.php'], $atual) ?>">Dashboard</a>
+
+      <!-- Agendamentos -->
+      <?php if (function_exists('tem_permissao') && tem_permissao('entradas')): ?>
+        <a href="agendamentos.php" class="<?= menu_cls('agendamentos.php', ['agendamento_form.php'], $atual) ?>">Agendamentos</a>
+      <?php endif; ?>
 
       <!-- Módulos operacionais -->
       <?php if (function_exists('tem_permissao') && tem_permissao('clientes')): ?>
@@ -229,15 +218,13 @@ tailwind.config = {
         <a href="entradas.php" class="<?= menu_cls('entradas.php', ['entrada_lavagem.php', 'cupom_lavagem.php', 'recibo.php'], $atual) ?>">Entradas</a>
       <?php endif; ?>
 
+      <?php if (function_exists('tem_permissao') && tem_permissao('estoque')): ?>
+        <a href="estoque.php" class="<?= menu_cls('estoque.php', ['estoque_form.php', 'estoque_xml.php', 'estoque_relatorio.php', 'estoque_inventario.php'], $atual) ?>">Estoque</a>
+      <?php endif; ?>
+
       <?php if (function_exists('tem_permissao') && tem_permissao('fornecedores')): ?>
         <a href="fornecedores.php" class="<?= menu_cls('fornecedores.php', ['fornecedor_form.php'], $atual) ?>">Fornecedores</a>
       <?php endif; ?>
-
-      
-      <?php if (function_exists('tem_permissao') && tem_permissao('estoque')): ?>
-        <a href="estoque.php" class="<?= menu_cls('estoque.php', ['estoque_form.php', 'estoque_xml.php'], $atual) ?>">Estoque</a>
-      <?php endif; ?>
-      
 
       <?php if (function_exists('tem_permissao') && tem_permissao('pagamentos')): ?>
         <a href="pagamentos.php" class="<?= menu_cls('pagamentos.php', [
@@ -246,11 +233,8 @@ tailwind.config = {
            ], $atual) ?>">Pagamentos</a>
       <?php endif; ?>
 
-      
-
-      <!-- ADICIONE ESTE BLOCO -->
       <?php if (function_exists('tem_permissao') && tem_permissao('comissoes')): ?>
-        <a href="comissoes.php" class="<?= menu_cls('comissoes.php', [], $atual) ?>">Comissões</a>
+        <a href="comissoes.php" class="<?= menu_cls('comissoes.php', ['comissoes_recibo.php'], $atual) ?>">Comissões</a>
       <?php endif; ?>
 
       <?php if (function_exists('tem_permissao') && tem_permissao('administrativo')): ?>

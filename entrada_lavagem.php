@@ -8,8 +8,21 @@ ensure_lavagem_veiculos();
 ensure_lavagem_pecas();
 ensure_estoque();
 ensure_comissoes();
+ensure_agendamentos();
 
 $u = usuario_logado();
+
+/* =========================================================
+ *  Carrega dados do Agendamento (se houver)
+ * ========================================================= */
+$agendamento_id = (int)($_GET['agendamento_id'] ?? 0);
+$agendamento = null;
+
+if ($agendamento_id > 0) {
+    $stAg = db()->prepare("SELECT * FROM agendamentos WHERE id = ?");
+    $stAg->execute([$agendamento_id]);
+    $agendamento = $stAg->fetch();
+}
 
 $id      = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 $editar  = $id > 0;
@@ -246,7 +259,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
                     $insI->execute([$entrada_id, $novoVeiculoId, $it['lavagem_id'], $it['nome'], $it['preco_centavos']]);
                     $itemId = (int)$pdo->lastInsertId();
 
-                    // GERA COMISSÃO SE TIVER EQUIPE E SE O SERVIÇO PAGA COMISSÃO
                     if ($it['paga_comissao'] && !empty($it['equipe']) && $it['comissao_centavos'] > 0) {
                         $qtdPessoas = count($it['equipe']);
                         $valorDividido = (int) round($it['comissao_centavos'] / $qtdPessoas);
@@ -263,6 +275,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['acao'] ?? '', ['sa
                     $insP->execute([$entrada_id, $novoVeiculoId, $p['id'], $p['nome'], $p['qtd'], $p['preco_centavos'], $p['desconto_centavos'], $p['total_centavos']]);
                     $pdo->prepare("UPDATE estoque_itens SET quantidade = quantidade - ? WHERE id = ?")->execute([$p['qtd'], $p['id']]);
                 }
+            }
+
+            if ($agendamento_id > 0) {
+                $pdo->prepare("UPDATE agendamentos SET status = 'concluido' WHERE id = ?")->execute([$agendamento_id]);
             }
 
             $pdo->commit();
@@ -292,6 +308,13 @@ $v = [
     'hora_entrada' => $entrada['hora_entrada'] ?? date('H:i'), 'previsao_horas' => (int)($entrada['previsao_saida_horas'] ?? 0),
     'observacoes' => $entrada['observacoes'] ?? '', 'avarias' => $entrada['avarias'] ?? '',
 ];
+
+if ($agendamento && !$editar && $_SERVER['REQUEST_METHOD'] !== 'POST') {
+    $v['cliente_nome'] = $agendamento['cliente_nome'];
+    $v['cliente_celular'] = $agendamento['cliente_celular'];
+    $v['data_entrada'] = $agendamento['data_agendamento'];
+    $v['hora_entrada'] = substr($agendamento['hora_agendamento'], 0, 5);
+}
 
 $descPercent = (int)($entrada['desconto_percentual'] ?? 0); $descCent = (int)($entrada['desconto_centavos'] ?? 0);
 if ($descPercent > 0) { $v['desconto_tipo'] = 'percentual'; $v['desconto'] = (string)$descPercent; } 
@@ -369,7 +392,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($ordens)) {
             'itens' => $itensBanco, 'pecas' => $stP->fetchAll()
         ];
     }
+} elseif ($agendamento) {
+    $stLav = db()->prepare("SELECT id, nome, preco_centavos, paga_comissao, comissao_centavos FROM lavagens WHERE id = ?");
+    $stLav->execute([$agendamento['lavagem_id']]);
+    $lav = $stLav->fetch();
+    
+    $veiculosForm[] = [
+        'ordem' => 1,
+        'placa' => $agendamento['placa'],
+        'manual_marca' => '', 'manual_modelo' => '', 'manual_cor' => '', 'manual_ano' => '',
+        'itens' => $lav ? [
+            [
+                'lavagem_id' => $lav['id'], 'nome' => $lav['nome'], 'preco_centavos' => $lav['preco_centavos'], 
+                'paga_comissao' => $lav['paga_comissao'], 'comissao_centavos' => $lav['comissao_centavos'], 'equipe' => ''
+            ]
+        ] : [],
+        'pecas' => []
+    ];
 }
+
 if (!$veiculosForm) { 
     $veiculosForm[] = ['ordem' => 1, 'placa' => '', 'manual_marca' => '', 'manual_modelo' => '', 'manual_cor' => '', 'manual_ano' => '', 'itens' => [], 'pecas' => []]; 
 }
@@ -514,7 +555,6 @@ require __DIR__ . '/header.php';
   var inputAlvo = null;
   var btnAlvo = null;
 
-  // FUNÇÃO GLOBAL PARA ABRIR O MODAL
   function abrirModal(btn, inputId, valorComissao) {
     if (valorComissao <= 0) {
         alert('Atenção: O valor desta comissão está zerado no cadastro do serviço.\n\nVá em "Lavagens", edite este serviço e informe um valor de comissão para que o funcionário receba.');
@@ -536,7 +576,6 @@ require __DIR__ . '/header.php';
     document.getElementById('modalEquipe').classList.remove('hidden');
   }
 
-  // FUNÇÃO GLOBAL PARA SALVAR A EQUIPE
   function salvarEquipe() {
     var sel = [];
     document.getElementById('listaEquipe').querySelectorAll('input:checked').forEach(function(c) { sel.push(c.value); });
@@ -607,7 +646,6 @@ require __DIR__ . '/header.php';
       if (pagaComissao) {
           var texto = equipeIds ? '👤 Equipe Definida' : '👤 Quem fez?';
           var classe = equipeIds ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600';
-          // Passa o valor da comissão para checar se está zerado
           btnEq = '<button type="button" onclick="abrirModal(this, \'equipe_' + ord + '_' + id + '\', ' + valorComissao + ')" class="btn-equipe ' + classe + ' px-2 py-1 rounded text-[11px] font-bold ml-2 whitespace-nowrap">' + texto + '</button>';
       }
       return '<div class="flex flex-col sm:flex-row items-start sm:items-center gap-3 px-3 py-2" data-id="' + id + '" data-preco="' + preco + '">'
