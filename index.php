@@ -105,7 +105,7 @@ tailwind.config = {
   
   /* Fundo com a imagem do carro */
   .bg-login {
-    background-image: url('./uploads/img/img_loginLava3.WEBP');
+    background-image: url('./uploads/img/lava2.WEBP');
     background-size: cover;
     background-position: center right;
     background-repeat: no-repeat;

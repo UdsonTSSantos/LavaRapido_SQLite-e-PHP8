@@ -12,9 +12,6 @@ ensure_agendamentos();
 
 $u = usuario_logado();
 
-/* =========================================================
- *  Carrega dados do Agendamento (se houver)
- * ========================================================= */
 $agendamento_id = (int)($_GET['agendamento_id'] ?? 0);
 $agendamento = null;
 
@@ -26,6 +23,20 @@ if ($agendamento_id > 0) {
 
 $id      = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 $editar  = $id > 0;
+
+if ($agendamento && !$editar) {
+    if (($agendamento['data_agendamento'] ?? '') < date('Y-m-d')) {
+        flash('Não é possível dar entrada: agendamento com data anterior a hoje.', 'erro');
+        header('Location: agendamentos.php');
+        exit;
+    }
+    if (($agendamento['status'] ?? '') === 'concluido') {
+        flash('Este agendamento já foi concluído.', 'erro');
+        header('Location: agendamentos.php');
+        exit;
+    }
+}
+
 $entrada = null;
 $veiculosExistentes = [];
 
@@ -433,7 +444,9 @@ require __DIR__ . '/header.php';
 <div class="max-w-5xl mx-auto">
   <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
     <div>
-      <h1 class="text-2xl font-bold text-slate-900"><?= $editar ? 'Editar entrada' : 'Nova entrada' ?></h1>
+      <h1 class="text-2xl font-bold text-slate-900">
+        <?= $editar ? 'Editar entrada <span class="text-brand-600">#' . str_pad($id, 5, '0', STR_PAD_LEFT) . '</span>' : 'Nova entrada' ?>
+      </h1>
       <p class="text-sm text-slate-500"><?= $editar ? 'Altere os dados e salve.' : 'Registre um ou mais veículos na mesma comanda.' ?></p>
     </div>
     <div class="flex items-center gap-3 text-right">
@@ -510,16 +523,19 @@ require __DIR__ . '/header.php';
       </div>
     </section>
 
-    <div class="flex justify-end gap-2 pt-2 flex-wrap">
-      <a href="entradas.php" class="px-4 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-semibold">Cancelar</a>
+    <!-- BOTÕES DE AÇÃO -->
+    <div class="flex justify-end items-center gap-2 pt-4 flex-wrap border-t border-slate-200 mt-6">
+      <a href="entradas.php" class="px-4 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm transition">
+        Cancelar
+      </a>
       
-      <button type="submit" name="acao" value="salvar_imprimir" class="px-5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold shadow-sm flex items-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
-        Imprimir cupom
+      <button type="submit" name="acao" value="salvar" class="px-6 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-sm transition">
+        Salvar Entrada
       </button>
 
-      <button type="submit" name="acao" value="salvar" class="px-5 py-2.5 rounded-lg bg-brand-500 hover:bg-brand-700 text-white font-semibold shadow-sm">
-        Registrar entrada
+      <button type="submit" name="acao" value="salvar_imprimir" class="px-5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold shadow-sm flex items-center gap-2 transition">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+        Imprimir cupom
       </button>
     </div>
   </form>
@@ -538,6 +554,50 @@ require __DIR__ . '/header.php';
     <div class="px-5 py-3 border-t border-slate-200 flex justify-end gap-2 bg-slate-50 rounded-b-2xl">
       <button type="button" class="btn-fechar-eq px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-700 font-semibold text-sm">Cancelar</button>
       <button type="button" onclick="salvarEquipe()" class="px-4 py-2 rounded-lg bg-brand-500 text-white font-semibold text-sm shadow-sm">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE PENDÊNCIA (NOVO) -->
+<div id="modalPendencia" class="hidden fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+    <div class="bg-rose-600 px-5 py-4 flex items-center gap-3">
+      <div class="bg-white/20 p-2 rounded-full">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+      </div>
+      <div>
+        <h3 class="font-bold text-white text-lg">Atenção!</h3>
+        <p class="text-rose-100 text-xs">Veículo possui lavagem em aberto</p>
+      </div>
+    </div>
+    
+    <div class="p-6">
+      <div class="bg-rose-50 border border-rose-200 rounded-lg p-4 mb-4">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-sm font-bold text-rose-800">Cupom:</span>
+          <span class="text-base font-mono font-bold text-rose-900" id="p_id"></span>
+        </div>
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-sm font-bold text-rose-800">Data da Entrada:</span>
+          <span class="text-sm font-semibold text-rose-900" id="p_data"></span>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-sm font-bold text-rose-800">Valor Total:</span>
+          <span class="text-lg font-black text-rose-600" id="p_total"></span>
+        </div>
+      </div>
+
+      <div>
+        <h4 class="text-xs font-bold text-slate-500 uppercase mb-2">Serviços Pendentes:</h4>
+        <ul id="p_lista" class="text-sm text-slate-700 space-y-1 mb-6 bg-slate-50 p-3 rounded-lg border border-slate-200">
+          <!-- Preenchido via JS -->
+        </ul>
+      </div>
+
+      <div class="flex gap-2 justify-end">
+        <button type="button" onclick="document.getElementById('modalPendencia').classList.add('hidden')" class="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm">Fechar e Continuar</button>
+        <a href="pagamentos_pendentes.php" class="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm shadow-sm">Ir para Pagamentos</a>
+      </div>
     </div>
   </div>
 </div>
@@ -597,8 +657,22 @@ require __DIR__ . '/header.php';
     var hiddenCli = document.getElementById('cliente_id');
     
     if (inputCel) { 
-        var aplicarCel = function () { inputCel.value = String(inputCel.value||'').replace(/\D+/g,'').slice(0,11); if(inputCel.value.length>2) inputCel.value = '(' + inputCel.value.slice(0,2) + ') ' + inputCel.value.slice(2); }; 
-        inputCel.addEventListener('input', aplicarCel); inputCel.addEventListener('blur', aplicarCel); aplicarCel(); 
+        var aplicarCel = function () { 
+            let v = inputCel.value.replace(/\D/g, '').slice(0, 11);
+            if (v.length > 10) {
+                v = v.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
+            } else if (v.length > 6) {
+                v = v.replace(/^(\d{2})(\d{4})(\d{0,4}).*/, '($1) $2-$3');
+            } else if (v.length > 2) {
+                v = v.replace(/^(\d{2})(\d{0,5})/, '($1) $2');
+            } else if (v.length > 0) {
+                v = v.replace(/^(\d{0,2})/, '($1');
+            }
+            inputCel.value = v; 
+        }; 
+        inputCel.addEventListener('input', aplicarCel); 
+        inputCel.addEventListener('blur', aplicarCel); 
+        aplicarCel(); 
     }
     
     function vincularCliente() {
@@ -742,6 +816,33 @@ require __DIR__ . '/header.php';
       document.getElementById('subtotalView').textContent = brl(subGeral); document.getElementById('descView').textContent = '- ' + brl(desc); document.getElementById('totalView').textContent = brl(Math.max(0, subGeral - desc));
     }
 
+    // ----------------------------------------------------
+    // FUNÇÃO PARA VERIFICAR PENDÊNCIAS
+    // ----------------------------------------------------
+    function verificarPendencia(placa) {
+        fetch('verificar_pendencia.php?placa=' + encodeURIComponent(placa))
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) {
+                document.getElementById('p_id').textContent = '#' + d.entrada.id;
+                document.getElementById('p_data').textContent = d.entrada.data;
+                document.getElementById('p_total').textContent = d.entrada.total;
+                
+                let listHtml = '';
+                d.entrada.itens.forEach(i => {
+                    listHtml += '<li class="flex justify-between border-b border-slate-200 pb-1 last:border-0 last:pb-0">'
+                              + '<span>' + i.nome + '</span>'
+                              + '<span class="font-bold">' + i.preco + '</span>'
+                              + '</li>';
+                });
+                document.getElementById('p_lista').innerHTML = listHtml;
+
+                document.getElementById('modalPendencia').classList.remove('hidden');
+            }
+        })
+        .catch(err => console.error('Erro ao buscar pendências:', err));
+    }
+
     function consultarPlaca(bloco) {
       var input = bloco.querySelector('.input-placa'); if (!input) return; var status = bloco.querySelector('.placa-status'); status.textContent = '...';
       fetch('consultar_placa.php?placa=' + encodeURIComponent(input.value)).then(r=>r.json()).then(d => { 
@@ -758,7 +859,24 @@ require __DIR__ . '/header.php';
           status.textContent = '!'; status.className='placa-status absolute right-3 top-2.5 text-xs text-amber-600'; bloco.querySelector('.manual-box').open = true; 
       });
     }
-    wrap.addEventListener('input', function(e) { if (e.target.classList.contains('input-placa')) { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7); var b = e.target.closest('.veiculo-block'); clearTimeout(b.__timer); if (e.target.value.length === 7) b.__timer = setTimeout(()=>consultarPlaca(b), 350); } });
+
+    wrap.addEventListener('input', function(e) { 
+        if (e.target.classList.contains('input-placa')) { 
+            e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7); 
+            
+            // Fecha o modal de pendência se o usuário mudar a placa
+            document.getElementById('modalPendencia').classList.add('hidden');
+
+            var b = e.target.closest('.veiculo-block'); 
+            clearTimeout(b.__timer); 
+            if (e.target.value.length === 7) {
+                b.__timer = setTimeout(() => {
+                    consultarPlaca(b);
+                    verificarPendencia(e.target.value); // Verifica pendência aqui
+                }, 350); 
+            }
+        } 
+    });
 
     if (VEICULOS_INICIAIS.length) VEICULOS_INICIAIS.forEach(v => adicionarBloco(v)); else adicionarBloco({ placa: '', itens: [], pecas: [] });
   });

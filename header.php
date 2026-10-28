@@ -1,272 +1,92 @@
 <?php
-/* ---------- Bloqueio de acesso direto ---------- */
-if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
-    header('Location: index.php');
-    exit;
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
-
-/** @var string $titulo */
-$titulo = $titulo ?? 'Sistema';
-$u      = usuario_logado();
-
-$__emp  = [];
-$__logo = null;
-try {
-    $__emp  = empresa();
-    $__logo = empresa_logo_url();
-} catch (Throwable $e) {
-    $__emp = []; $__logo = null;
-}
-
-$__nome = $__emp['nome_fantasia'] ?? '';
-if ($__nome === '') $__nome = $__emp['razao_social'] ?? '';
-if ($__nome === '') $__nome = 'Sistema';
-
-$nomeTopo = '';
-$atual    = basename($_SERVER['PHP_SELF'] ?? '');
-
-if ($u) {
-    $nomeTopo = $u['email'];
-    try {
-        $st = db()->prepare('SELECT nome FROM usuarios WHERE id = ?');
-        $st->execute([(int)$_SESSION['usuario_id']]);
-        $n = $st->fetchColumn();
-        if ($n) $nomeTopo = $n;
-    } catch (Throwable $e) { /* ignora */ }
-}
-
-function menu_cls(string $href, array $arquivos, string $atual): string {
-    $ativo = ($atual === $href) || in_array($atual, $arquivos, true);
-    return $ativo
-        ? 'px-3.5 py-2 rounded-lg bg-white text-brand-700 font-bold shadow-sm'
-        : 'px-3.5 py-2 rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition font-medium';
-}
+require_once __DIR__ . '/config.php';
+$u = usuario_logado();
+$paginaAtual = basename($_SERVER['PHP_SELF']);
 ?>
 <!DOCTYPE html>
-<html lang="pt-BR" class="h-full">
+<html lang="pt-BR">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title><?= e($titulo) ?> • <?= e($__nome) ?></title>
-<?php if ($__logo): ?>
-  <link rel="icon" href="<?= e($__logo) ?>">
-  <link rel="apple-touch-icon" href="<?= e($__logo) ?>">
-<?php endif; ?>
-
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-/* =========================================================
- *  PALETA DO SISTEMA
- * ========================================================= */
-tailwind.config = {
-  theme: {
-    extend: {
-      colors: {
-        brand: {
-          50:  '#f0fbff',
-          100: '#b6ffff',
-          200: '#7cdaf9',
-          300: '#4dc9f5',
-          400: '#0cb7f2',
-          500: '#0979b0',
-          600: '#076a9c',
-          700: '#004173',
-          800: '#003256',
-          900: '#002039',
-        }
-      },
-      fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif']
-      },
-      boxShadow: {
-        card: '0 1px 2px rgba(0,65,115,.05), 0 8px 24px rgba(0,65,115,.06)',
-        soft: '0 1px 3px rgba(0,65,115,.08)',
-      }
-    }
-  }
-};
-</script>
-
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-<style>
-  :root {
-    --brand-700: #004173;
-    --brand-500: #0979b0;
-    --brand-400: #0cb7f2;
-    --brand-200: #7cdaf9;
-    --brand-100: #b6ffff;
-  }
-
-  html, body {
-    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  }
-
-  /* =========================================================
-   *  CAMPOS DE FORMULÁRIO — padrão global do sistema
-   * ========================================================= */
-  input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="hidden"]),
-  select,
-  textarea {
-    font-size: 1rem;
-    font-weight: 600;
-    color: #000000;
-    background-color: #ffffff;
-    border: 1.5px solid #cbd5e1;
-    border-radius: 0.625rem;
-    padding: 0.7rem 0.875rem;
-    transition: border-color .15s, box-shadow .15s, background-color .15s;
-    width: 100%;
-    line-height: 1.35;
-  }
-
-  input::placeholder,
-  textarea::placeholder {
-    color: #94a3b8;
-    font-weight: 500;
-  }
-
-  input:focus,
-  select:focus,
-  textarea:focus {
-    outline: none;
-    border-color: var(--brand-400);
-    box-shadow: 0 0 0 4px rgba(12, 183, 242, 0.18);
-    background-color: #ffffff;
-  }
-
-  input:disabled,
-  select:disabled,
-  textarea:disabled {
-    background-color: #f1f5f9;
-    color: #64748b;
-    cursor: not-allowed;
-  }
-
-  input[type="checkbox"],
-  input[type="radio"] {
-    width: 1.15rem;
-    height: 1.15rem;
-    accent-color: var(--brand-400);
-    cursor: pointer;
-    vertical-align: middle;
-  }
-
-  label {
-    font-weight: 600;
-    color: #0f172a;
-  }
-
-  /* Botões primários */
-  .btn-primary {
-    background-color: var(--brand-500);
-    color: #fff;
-    font-weight: 600;
-    padding: 0.7rem 1.15rem;
-    border-radius: 0.625rem;
-    transition: background-color .15s, transform .05s;
-    box-shadow: 0 1px 2px rgba(0,65,115,.15);
-  }
-  .btn-primary:hover { background-color: var(--brand-700); }
-
-  /* Scrollbar discreta */
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-track { background: #f1f5f9; }
-  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
-  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?= isset($titulo) ? e($titulo) . ' - ' : '' ?>Lava Rápido System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .sidebar-bg { background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%); }
+        .nav-link { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; color: rgba(255, 255, 255, 0.85); border-radius: 0.75rem; font-weight: 500; transition: all 0.2s ease-in-out; }
+        .nav-link:hover { background-color: rgba(255, 255, 255, 0.1); color: #ffffff; }
+        .nav-link.active { background-color: rgba(255, 255, 255, 0.2); color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.1); }
+        .icon-white { filter: brightness(0) invert(1); opacity: 0.85; transition: opacity 0.2s; }
+        .nav-link:hover .icon-white, .nav-link.active .icon-white { opacity: 1; }
+        .btn-sair { background: linear-gradient(90deg, #f59e0b 0%, #f97316 100%); color: #ffffff; font-weight: 700; padding: 0.75rem 0; border-radius: 0.75rem; text-align: center; transition: opacity 0.2s; display: flex; justify-content: center; }
+        .btn-sair:hover { opacity: 0.9; }
+        .categoria-texto { color: rgba(255, 255, 255, 0.6); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+    </style>
 </head>
-<body class="h-full bg-slate-50 text-slate-800 antialiased">
+<body class="text-slate-800 antialiased min-h-screen flex">
 
-<?php if ($u): ?>
-<nav class="sticky top-0 z-40 text-white shadow-lg"
-     style="background: linear-gradient(135deg, #004173 0%, #0979b0 100%);">
-  <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-    
-    <!-- Logo e Nome da Empresa -->
-    <a href="<?= $u['is_admin'] ? 'dashboard.php' : 'agendamentos.php' ?>" class="flex items-center gap-3 font-bold tracking-tight text-lg">
-      <?php if ($__logo): ?>
-        <img src="<?= e($__logo) ?>" alt="Logo"
-             class="h-9 w-9 object-contain bg-white/95 rounded-lg p-0.5 shadow-sm">
-      <?php endif; ?>
-      <span><?= e($__nome) ?></span>
-    </a>
+    <!-- SIDEBAR -->
+    <aside class="hidden md:flex flex-col w-64 sidebar-bg h-screen sticky top-0 overflow-y-auto shrink-0 z-40">
+        <div class="p-6"><h1 class="font-bold text-2xl text-white">Menu</h1></div>
+        <nav class="flex-1 px-4 space-y-1">
+            <p class="categoria-texto mb-2 ml-2">Operações</p>
+            <a href="dashboard.php" class="nav-link <?= $paginaAtual === 'dashboard.php' ? 'active' : '' ?>"><img src="uploads/icones/ico_dashboard.svg" class="w-5 h-5 icon-white"> Dashboard</a>
+            <a href="agendamentos.php" class="nav-link <?= $paginaAtual === 'agendamentos.php' ? 'active' : '' ?>"><img src="uploads/icones/ico_date.svg" class="w-5 h-5 icon-white"> Agendamentos</a>
+            <a href="entradas.php" class="nav-link <?= in_array($paginaAtual, ['entradas.php', 'entrada_lavagem.php']) ? 'active' : '' ?>"><img src="uploads/icones/ico_car.svg" class="w-5 h-5 icon-white"> Entradas</a>
+            <a href="lavagens.php" class="nav-link <?= $paginaAtual === 'lavagens.php' ? 'active' : '' ?>"><img src="uploads/icones/ico_lavagens.svg" class="w-5 h-5 icon-white"> Lavagens</a>
+            <a href="pagamentos.php" class="nav-link <?= $paginaAtual === 'pagamentos.php' ? 'active' : '' ?>"><img src="uploads/icones/ico_money.svg" class="w-5 h-5 icon-white"> Pagamentos</a>
+            <a href="pagamentos_pendentes.php" class="nav-link <?= $paginaAtual === 'pagamentos_pendentes.php' ? 'active' : '' ?>"><img src="uploads/icones/ico_pendentes.svg" class="w-5 h-5 icon-white"> Pendentes</a>
+            
+            <p class="categoria-texto mt-6 mb-2 ml-2">Cadastros</p>
+            <a href="clientes.php" class="nav-link <?= $paginaAtual === 'clientes.php' ? 'active' : '' ?>"><img src="uploads/icones/ico_clientes.svg" class="w-5 h-5 icon-white"> Clientes</a>
+            <a href="lavagens.php" class="nav-link <?= $paginaAtual === 'servicos.php' ? 'active' : '' ?>"><img src="uploads/icones/ico_services.svg" class="w-5 h-5 icon-white"> Serviços</a>
+            <a href="estoque.php" class="nav-link <?= $paginaAtual === 'estoque.php' ? 'active' : '' ?>"><img src="uploads/icones/ico_estoque.svg" class="w-5 h-5 icon-white"> Estoque</a>
+            <a href="usuarios.php" class="nav-link <?= $paginaAtual === 'usuarios.php' ? 'active' : '' ?>"><img src="uploads/icones/ico_users.svg" class="w-5 h-5 icon-white"> Equipe</a>
+        </nav>
+        <div class="p-4 mt-auto"><a href="logout.php" class="btn-sair">SAIR</a></div>
+    </aside>
 
-    <!-- Menu de Navegação -->
-    <div class="flex items-center gap-1 text-sm flex-wrap">
-      
-      <!-- Dashboard (sempre visível) -->
-      <a href="dashboard.php" class="<?= menu_cls('dashboard.php', ['dashboard_operacional.php'], $atual) ?>">Dashboard</a>
+    <!-- CONTEÚDO PRINCIPAL -->
+    <main class="flex-1 flex flex-col min-h-screen overflow-x-hidden">
+        
+        <!-- FLASH MESSAGES (Avisos de Sucesso/Erro) -->
+        <!-- Aumentei o padding-top (pt-8) para o conteúdo não ficar colado no teto -->
+        <div class="px-8 pt-8 w-full max-w-7xl mx-auto">
+            <?php
+            if (isset($_SESSION['flash'])) {
+                $flash_data = $_SESSION['flash'];
+                unset($_SESSION['flash']);
 
-      <!-- Agendamentos -->
-      <?php if (function_exists('tem_permissao') && tem_permissao('entradas')): ?>
-        <a href="agendamentos.php" class="<?= menu_cls('agendamentos.php', ['agendamento_form.php'], $atual) ?>">Agendamentos</a>
-      <?php endif; ?>
+                $msg = '';
+                $tipo = 'sucesso';
 
-      <!-- Módulos operacionais -->
-      <?php if (function_exists('tem_permissao') && tem_permissao('clientes')): ?>
-        <a href="clientes.php" class="<?= menu_cls('clientes.php', ['cliente_form.php', 'cliente_historico.php'], $atual) ?>">Clientes</a>
-      <?php endif; ?>
+                if (is_array($flash_data)) {
+                    if (isset($flash_data['msg'])) {
+                        $msg = $flash_data['msg'];
+                        $tipo = $flash_data['tipo'] ?? 'sucesso';
+                    } elseif (count($flash_data) > 0) {
+                        $chaves = array_keys($flash_data);
+                        if ($chaves[0] !== 'tipo') {
+                            $msg = $chaves[0];
+                            $tipo = $flash_data[$chaves[0]];
+                        }
+                    }
+                } else {
+                    $msg = $flash_data;
+                }
 
-      <?php if (function_exists('tem_permissao') && tem_permissao('lavagens')): ?>
-        <a href="lavagens.php" class="<?= menu_cls('lavagens.php', ['lavagem_form.php'], $atual) ?>">Lavagens</a>
-      <?php endif; ?>
+                if (!empty($msg) && $msg !== 'tipo') {
+                    $cores = ($tipo === 'sucesso' || $tipo === 'success') 
+                        ? 'bg-emerald-100 border-emerald-300 text-emerald-800' 
+                        : 'bg-rose-100 border-rose-300 text-rose-800';
+                    
+                    echo '<div class="mb-4 rounded-xl border ' . $cores . ' px-4 py-3 text-sm font-semibold shadow-sm">' . e($msg) . '</div>';
+                }
+            }
+            ?>
+        </div>
 
-      <?php if (function_exists('tem_permissao') && tem_permissao('entradas')): ?>
-        <a href="entradas.php" class="<?= menu_cls('entradas.php', ['entrada_lavagem.php', 'cupom_lavagem.php', 'recibo.php'], $atual) ?>">Entradas</a>
-      <?php endif; ?>
-
-      <?php if (function_exists('tem_permissao') && tem_permissao('estoque')): ?>
-        <a href="estoque.php" class="<?= menu_cls('estoque.php', ['estoque_form.php', 'estoque_xml.php', 'estoque_relatorio.php', 'estoque_inventario.php'], $atual) ?>">Estoque</a>
-      <?php endif; ?>
-
-      <?php if (function_exists('tem_permissao') && tem_permissao('fornecedores')): ?>
-        <a href="fornecedores.php" class="<?= menu_cls('fornecedores.php', ['fornecedor_form.php'], $atual) ?>">Fornecedores</a>
-      <?php endif; ?>
-
-      <?php if (function_exists('tem_permissao') && tem_permissao('pagamentos')): ?>
-        <a href="pagamentos.php" class="<?= menu_cls('pagamentos.php', [
-              'pagamento_form.php', 'dashboard_pagamentos.php',
-              'relatorio_pagamentos.php', 'categorias_pagamento.php',
-           ], $atual) ?>">Pagamentos</a>
-      <?php endif; ?>
-
-      <?php if (function_exists('tem_permissao') && tem_permissao('comissoes')): ?>
-        <a href="comissoes.php" class="<?= menu_cls('comissoes.php', ['comissoes_recibo.php'], $atual) ?>">Comissões</a>
-      <?php endif; ?>
-
-      <?php if (function_exists('tem_permissao') && tem_permissao('administrativo')): ?>
-        <a href="administrativo.php" class="<?= menu_cls('administrativo.php', [], $atual) ?>">Administrativo</a>
-      <?php endif; ?>
-
-      <!-- Área exclusiva do Administrador -->
-      <?php if ($u['is_admin']): ?>
-        <span class="mx-1.5 h-5 w-px bg-white/25 hidden md:inline-block"></span>
-        <a href="usuarios.php" class="<?= menu_cls('usuarios.php', ['usuario_form.php','usuario_senha_gerada.php'], $atual) ?>">Usuários</a>
-        <a href="empresa.php"  class="<?= menu_cls('empresa.php',  [], $atual) ?>">Empresa</a>
-      <?php endif; ?>
-
-      <!-- Sessão -->
-      <span class="mx-1.5 h-5 w-px bg-white/25 hidden md:inline-block"></span>
-      <span class="hidden md:inline text-white/90 font-medium pr-2">
-        <?= e($nomeTopo) ?><?= $u['is_admin'] ? ' · admin' : '' ?>
-      </span>
-      <a href="trocar_senha.php" class="px-3.5 py-2 rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition font-medium">Trocar senha</a>
-      <a href="logout.php"       class="px-3.5 py-2 rounded-lg bg-rose-500 hover:bg-rose-600 text-white font-semibold transition shadow-sm">Sair</a>
-    </div>
-  </div>
-</nav>
-<?php endif; ?>
-
-<main class="max-w-7xl mx-auto px-4 py-6 sm:py-8">
-
-<?php if ($f = flash()): ?>
-  <div class="fade-up mb-5 rounded-xl border px-4 py-3 text-sm font-medium shadow-sm
-    <?= $f['tipo'] === 'erro' ? 'bg-rose-50 border-rose-200 text-rose-800'
-        : ($f['tipo'] === 'sucesso' ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-        : 'bg-brand-50 border-brand-200 text-brand-700') ?>">
-    <?= e($f['msg']) ?>
-  </div>
-<?php endif; ?>
+        <div class="flex-1 px-8 py-6 max-w-7xl mx-auto w-full">
